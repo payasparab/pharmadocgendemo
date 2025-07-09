@@ -741,26 +741,6 @@ def main():
                     )
                 else:
                     raise RuntimeError("OpenAI API key not found or invalid. Please set your OpenAI API key.")
-                
-                # Display generated text
-                st.markdown('<div class="regulatory-text">', unsafe_allow_html=True)
-                st.subheader("3.2.P.1.1 Description of the Dosage Form")
-                st.write(sections['description'])
-                
-                if sections.get('composition_intro') and sections['composition_intro'].strip():
-                    st.subheader("3.2.P.1.2 Composition")
-                    st.write(sections['composition_intro'])
-                
-                if sections.get('pharmaceutical_development') and sections['pharmaceutical_development'].strip():
-                    st.subheader("3.2.P.1.3 Pharmaceutical Development")
-                    st.write(sections['pharmaceutical_development'])
-                
-                if sections.get('manufacturing_process') and sections['manufacturing_process'].strip():
-                    st.subheader("3.2.P.1.4 Manufacturing Process")
-                    st.write(sections['manufacturing_process'])
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-                
                 # Store in session state for export
                 st.session_state.sections = sections
                 st.session_state.df = df
@@ -773,21 +753,21 @@ def main():
                 st.session_state.include_weight_vs_function = include_weight_vs_function
                 st.session_state.text_generated = True
 
-            # Always display the current text if it exists
-            if st.session_state.get('sections'):
-                st.markdown('<div class="regulatory-text">', unsafe_allow_html=True)
-                st.subheader("3.2.P.1.1 Description of the Dosage Form")
-                st.write(st.session_state.sections.get('description', ''))
-                if st.session_state.sections.get('composition_intro') and st.session_state.sections['composition_intro'].strip():
-                    st.subheader("3.2.P.1.2 Composition")
-                    st.write(st.session_state.sections['composition_intro'])
-                if st.session_state.sections.get('pharmaceutical_development') and st.session_state.sections['pharmaceutical_development'].strip():
-                    st.subheader("3.2.P.1.3 Pharmaceutical Development")
-                    st.write(st.session_state.sections['pharmaceutical_development'])
-                if st.session_state.sections.get('manufacturing_process') and st.session_state.sections['manufacturing_process'].strip():
-                    st.subheader("3.2.P.1.4 Manufacturing Process")
-                    st.write(st.session_state.sections['manufacturing_process'])
-                st.markdown('</div>', unsafe_allow_html=True)
+        # Always display the current text if it exists
+        if st.session_state.get('sections'):
+            st.markdown('<div class="regulatory-text">', unsafe_allow_html=True)
+            st.subheader("3.2.P.1.1 Description of the Dosage Form")
+            st.write(st.session_state.sections.get('description', ''))
+            if st.session_state.sections.get('composition_intro') and st.session_state.sections['composition_intro'].strip():
+                st.subheader("3.2.P.1.2 Composition")
+                st.write(st.session_state.sections['composition_intro'])
+            if st.session_state.sections.get('pharmaceutical_development') and st.session_state.sections['pharmaceutical_development'].strip():
+                st.subheader("3.2.P.1.3 Pharmaceutical Development")
+                st.write(st.session_state.sections['pharmaceutical_development'])
+            if st.session_state.sections.get('manufacturing_process') and st.session_state.sections['manufacturing_process'].strip():
+                st.subheader("3.2.P.1.4 Manufacturing Process")
+                st.write(st.session_state.sections['manufacturing_process'])
+            st.markdown('</div>', unsafe_allow_html=True)
         
         # Export section
         if 'sections' in st.session_state:
