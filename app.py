@@ -246,12 +246,10 @@ def generate_regulatory_text_with_ai(product_code: str, dosage_form: str,
                                    mechanism_of_action: str,
                                    drug_info: Dict,
                                    additional_instructions: str = "") -> Dict[str, str]:
-    """Generate regulatory text using OpenAI"""
-    
+    """Generate regulatory text using OpenAI only. If OpenAI is not available, raise an error."""
     client = initialize_openai()
     if not client:
-        return generate_fallback_text(product_code, dosage_form, composition_data, mechanism_of_action, drug_info)
-    
+        raise RuntimeError("OpenAI API key not found or invalid. Please set your OpenAI API key.")
     try:
         # Prepare composition data for AI
         composition_text = ""
@@ -263,14 +261,11 @@ def generate_regulatory_text_with_ai(product_code: str, dosage_form: str,
             quantity = row['Quantity_mg_per_tablet']
             total_weight += quantity
             composition_text += f"- {component} ({quality_ref}): {quantity} mg ({function})\n"
-        
         composition_text += f"- Total Weight: {total_weight} mg"
-        
         # Build prompt with additional instructions
         additional_prompt = ""
         if additional_instructions.strip():
             additional_prompt = f"\nAdditional Instructions: {additional_instructions}"
-        
         prompt = f"""
 You are a regulatory-writing assistant drafting Section 3.2.P.1 "Description and Composition of the Drug Product" for an IND that is currently in Phase II clinical trials. All content must be suitable for direct inclusion in an eCTD‐compliant Module 3 dossier.
 
@@ -295,6 +290,7 @@ Required Output Structure:
    - Introductory sentence: "The qualitative and quantitative composition of the {product_code} is provided in Table 1."
    - Table 1 should be titled 'Composition of the {product_code}'
    - Include all components with their quality references, functions, and quantities
+   - Do not include markdown or ASCII tables in the text. Only refer to the table by title or as Table 1.
 
 3. 3.2.P.1.3 Pharmaceutical Development
    - Brief description of formulation development considerations
@@ -306,7 +302,6 @@ Required Output Structure:
 
 Please provide the text in a structured format suitable for regulatory submission.
 """
-
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -316,16 +311,11 @@ Please provide the text in a structured format suitable for regulatory submissio
             max_tokens=1500,
             temperature=0.3
         )
-        
         ai_text = response.choices[0].message.content
-        
-        # Parse AI response and extract sections
         sections = parse_ai_response(ai_text, product_code)
-        
         return sections
-        
     except Exception as e:
-        return generate_fallback_text(product_code, dosage_form, composition_data, mechanism_of_action, drug_info)
+        raise RuntimeError(f"OpenAI API request failed: {e}")
 
 def parse_ai_response(ai_text: str, product_code: str) -> Dict[str, str]:
     """Parse AI response into structured sections"""
@@ -372,40 +362,6 @@ def parse_ai_response(ai_text: str, product_code: str) -> Dict[str, str]:
                 sections['manufacturing_process'] += line + ' '
     
     return sections
-
-def generate_fallback_text(product_code: str, dosage_form: str, 
-                          composition_data: pd.DataFrame, 
-                          mechanism_of_action: str,
-                          drug_info: Dict) -> Dict[str, str]:
-    """Generate fallback regulatory text without AI"""
-    
-    # Calculate total weight
-    total_weight = composition_data['Quantity_mg_per_tablet'].sum()
-    
-    # Get active ingredient info
-    active_ingredient = composition_data[composition_data['Function'] == 'Active Ingredient']
-    if not active_ingredient.empty:
-        active_strength = active_ingredient.iloc[0]['Quantity_mg_per_tablet']
-        active_name = active_ingredient.iloc[0]['Component']
-    else:
-        active_strength = 25.0  # Default
-        active_name = "Active Pharmaceutical Ingredient"
-    
-    description = f"""The {product_code} is an {dosage_form} containing {active_strength} mg of {active_name}. The tablet is formulated as a {dosage_form} with a total weight of {total_weight} mg. {mechanism_of_action}"""
-    
-    composition_intro = f"The qualitative and quantitative composition of the {product_code} is provided in Table 1."
-    
-    pharmaceutical_development = f"""The formulation development of {product_code} focused on achieving optimal bioavailability, stability, and patient acceptability. Key considerations included the selection of appropriate excipients to ensure proper tablet disintegration and drug release characteristics. The formulation was optimized through a series of development studies to ensure consistent quality and performance."""
-    
-    manufacturing_process = f"""The manufacturing process for {product_code} follows current Good Manufacturing Practice (cGMP) guidelines. The process includes raw material receipt and testing, weighing and dispensing, granulation (if required), compression, coating, and final packaging. Critical process parameters are monitored and controlled throughout manufacturing to ensure product quality and consistency."""
-    
-    return {
-        'description': description,
-        'composition_intro': composition_intro,
-        'pharmaceutical_development': pharmaceutical_development,
-        'manufacturing_process': manufacturing_process,
-        'table_title': f'Composition of the {product_code}'
-    }
 
 def export_to_word_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
                              product_code: str, dosage_form: str,
@@ -784,7 +740,7 @@ def main():
                         product_code, dosage_form, df, mechanism_of_action, drug_info
                     )
                 else:
-                    sections = generate_fallback_text(product_code, dosage_form, df, mechanism_of_action, drug_info)
+                    raise RuntimeError("OpenAI API key not found or invalid. Please set your OpenAI API key.")
                 
                 # Display generated text
                 st.markdown('<div class="regulatory-text">', unsafe_allow_html=True)
@@ -815,7 +771,23 @@ def main():
                 st.session_state.include_function_distribution = include_function_distribution
                 st.session_state.include_quality_references = include_quality_references
                 st.session_state.include_weight_vs_function = include_weight_vs_function
-                st.success("✅ Regulatory text generated successfully!")
+                st.session_state.text_generated = True
+
+            # Always display the current text if it exists
+            if st.session_state.get('sections'):
+                st.markdown('<div class="regulatory-text">', unsafe_allow_html=True)
+                st.subheader("3.2.P.1.1 Description of the Dosage Form")
+                st.write(st.session_state.sections.get('description', ''))
+                if st.session_state.sections.get('composition_intro') and st.session_state.sections['composition_intro'].strip():
+                    st.subheader("3.2.P.1.2 Composition")
+                    st.write(st.session_state.sections['composition_intro'])
+                if st.session_state.sections.get('pharmaceutical_development') and st.session_state.sections['pharmaceutical_development'].strip():
+                    st.subheader("3.2.P.1.3 Pharmaceutical Development")
+                    st.write(st.session_state.sections['pharmaceutical_development'])
+                if st.session_state.sections.get('manufacturing_process') and st.session_state.sections['manufacturing_process'].strip():
+                    st.subheader("3.2.P.1.4 Manufacturing Process")
+                    st.write(st.session_state.sections['manufacturing_process'])
+                st.markdown('</div>', unsafe_allow_html=True)
         
         # Export section
         if 'sections' in st.session_state:
