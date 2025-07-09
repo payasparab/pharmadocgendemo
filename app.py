@@ -189,14 +189,17 @@ def create_charts(df):
     return charts
 
 def save_chart_as_image(fig, chart_name):
-    """Save a plotly chart as a static image (black and white if color fails)"""
+    """Save a plotly chart as a static image PNG file, read bytes, and clean up temp file."""
     try:
-        # Try to save as PNG using write_image (newer API)
-        img_bytes = fig.write_image(format="png")
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
+            fig.write_image(tmpfile.name)
+            tmpfile.flush()
+            with open(tmpfile.name, 'rb') as f:
+                img_bytes = f.read()
+        os.remove(tmpfile.name)
         return img_bytes
     except Exception:
         try:
-            # Try with to_image (older API)
             img_bytes = fig.to_image(format="png")
             return img_bytes
         except Exception:
