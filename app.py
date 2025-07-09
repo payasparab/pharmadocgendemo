@@ -160,50 +160,63 @@ def create_sample_pharma_data():
     return pd.DataFrame(data)
 
 def create_charts(df):
-    """Create various charts for the document"""
+    """Create various charts for the document using Matplotlib, return dict of {name: image_bytes}"""
     charts = {}
-    color_seq = px.colors.qualitative.Set3
     # Bar chart - Component quantities
-    fig_bar = px.bar(df, x='Component', y='Quantity_mg_per_tablet', 
-                     title='Component Quantities per Tablet',
-                     color='Function', color_discrete_sequence=color_seq)
-    charts['component_quantities'] = fig_bar
+    fig, ax = plt.subplots(figsize=(6,4))
+    df.groupby('Component')['Quantity_mg_per_tablet'].sum().plot(kind='bar', ax=ax, color='skyblue')
+    ax.set_title('Component Quantities per Tablet')
+    ax.set_ylabel('Quantity (mg/tablet)')
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    charts['component_quantities'] = buf.read()
+    plt.close(fig)
     # Pie chart - Function distribution
-    function_summary = df.groupby('Function')['Quantity_mg_per_tablet'].sum().reset_index()
-    fig_pie = px.pie(function_summary, values='Quantity_mg_per_tablet', names='Function',
-                     title='Distribution by Function', color_discrete_sequence=color_seq)
-    charts['function_distribution'] = fig_pie
-    # Quality reference distribution
+    fig, ax = plt.subplots(figsize=(6,4))
+    function_summary = df.groupby('Function')['Quantity_mg_per_tablet'].sum()
+    ax.pie(function_summary, labels=function_summary.index, autopct='%1.1f%%', startangle=90)
+    ax.set_title('Distribution by Function')
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    charts['function_distribution'] = buf.read()
+    plt.close(fig)
+    # Bar chart - Quality reference distribution
+    fig, ax = plt.subplots(figsize=(6,4))
     quality_counts = df['Quality_Reference'].value_counts()
-    fig_quality = px.bar(x=quality_counts.index, y=quality_counts.values,
-                        title='Quality Reference Distribution',
-                        labels={'x': 'Quality Reference', 'y': 'Count'},
-                        color=quality_counts.index, color_discrete_sequence=color_seq)
-    charts['quality_references'] = fig_quality
-    # Component weight vs function
-    fig_scatter = px.scatter(df, x='Function', y='Quantity_mg_per_tablet', 
-                            size='Quantity_mg_per_tablet', color='Quality_Reference',
-                            title='Component Weight vs Function',
-                            hover_data=['Component'], color_discrete_sequence=color_seq)
-    charts['weight_vs_function'] = fig_scatter
+    quality_counts.plot(kind='bar', ax=ax, color='lightgreen')
+    ax.set_title('Quality Reference Distribution')
+    ax.set_ylabel('Count')
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    charts['quality_references'] = buf.read()
+    plt.close(fig)
+    # Scatter plot - Component weight vs function
+    fig, ax = plt.subplots(figsize=(6,4))
+    for func in df['Function'].unique():
+        subset = df[df['Function'] == func]
+        ax.scatter(subset['Function'], subset['Quantity_mg_per_tablet'], label=func, s=50)
+    ax.set_title('Component Weight vs Function')
+    ax.set_ylabel('Quantity (mg/tablet)')
+    ax.legend()
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    charts['weight_vs_function'] = buf.read()
+    plt.close(fig)
     return charts
 
-def save_chart_as_image(fig, chart_name):
-    """Save a plotly chart as a static image PNG file, read bytes, and clean up temp file."""
-    try:
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
-            fig.write_image(tmpfile.name)
-            tmpfile.flush()
-            with open(tmpfile.name, 'rb') as f:
-                img_bytes = f.read()
-        os.remove(tmpfile.name)
-        return img_bytes
-    except Exception:
-        try:
-            img_bytes = fig.to_image(format="png")
-            return img_bytes
-        except Exception:
-            return None
+def save_chart_as_image(fig_or_bytes, chart_name):
+    """For Matplotlib, fig_or_bytes is already image bytes. Return as is."""
+    if isinstance(fig_or_bytes, bytes):
+        return fig_or_bytes
+    return None
 
 def generate_regulatory_text_with_ai(product_code: str, dosage_form: str, 
                                    composition_data: pd.DataFrame, 
@@ -679,28 +692,28 @@ def main():
         chart_tabs = st.tabs(["Component Quantities", "Function Distribution", "Quality References", "Weight vs Function"])
         
         with chart_tabs[0]:
-            st.plotly_chart(charts['component_quantities'], use_container_width=True)
+            st.image(charts['component_quantities'], caption="Component Quantities per Tablet", use_column_width=True)
             if 'include_component_quantities' in locals() and include_component_quantities:
                 st.success("✅ This chart will be included in the report")
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
         with chart_tabs[1]:
-            st.plotly_chart(charts['function_distribution'], use_container_width=True)
+            st.image(charts['function_distribution'], caption="Distribution by Function", use_column_width=True)
             if 'include_function_distribution' in locals() and include_function_distribution:
                 st.success("✅ This chart will be included in the report")
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
         with chart_tabs[2]:
-            st.plotly_chart(charts['quality_references'], use_container_width=True)
+            st.image(charts['quality_references'], caption="Quality Reference Distribution", use_column_width=True)
             if 'include_quality_references' in locals() and include_quality_references:
                 st.success("✅ This chart will be included in the report")
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
         with chart_tabs[3]:
-            st.plotly_chart(charts['weight_vs_function'], use_container_width=True)
+            st.image(charts['weight_vs_function'], caption="Component Weight vs Function", use_column_width=True)
             if 'include_weight_vs_function' in locals() and include_weight_vs_function:
                 st.success("✅ This chart will be included in the report")
             else:
