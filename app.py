@@ -160,9 +160,16 @@ def create_sample_pharma_data():
     return pd.DataFrame(data)
 
 def create_charts(df):
-    """Create various charts for the document using Matplotlib, return dict of {name: image_bytes}"""
-    charts = {}
-    # Bar chart - Component quantities
+    """Create both Plotly and Matplotlib charts. Return (plotly_charts, export_charts) dicts."""
+    import plotly.express as px
+    plotly_charts = {}
+    export_charts = {}
+    # Plotly: Bar chart - Component quantities
+    fig_bar = px.bar(df, x='Component', y='Quantity_mg_per_tablet', 
+                     title='Component Quantities per Tablet',
+                     color='Function', color_discrete_sequence=px.colors.qualitative.Set3)
+    plotly_charts['component_quantities'] = fig_bar
+    # Matplotlib: Bar chart
     fig, ax = plt.subplots(figsize=(6,4))
     df.groupby('Component')['Quantity_mg_per_tablet'].sum().plot(kind='bar', ax=ax, color='skyblue')
     ax.set_title('Component Quantities per Tablet')
@@ -171,22 +178,33 @@ def create_charts(df):
     plt.tight_layout()
     plt.savefig(buf, format='png')
     buf.seek(0)
-    charts['component_quantities'] = buf.read()
+    export_charts['component_quantities'] = buf.read()
     plt.close(fig)
-    # Pie chart - Function distribution
+    # Plotly: Pie chart - Function distribution
+    function_summary = df.groupby('Function')['Quantity_mg_per_tablet'].sum().reset_index()
+    fig_pie = px.pie(function_summary, values='Quantity_mg_per_tablet', names='Function',
+                     title='Distribution by Function', color_discrete_sequence=px.colors.qualitative.Set3)
+    plotly_charts['function_distribution'] = fig_pie
+    # Matplotlib: Pie chart
     fig, ax = plt.subplots(figsize=(6,4))
-    function_summary = df.groupby('Function')['Quantity_mg_per_tablet'].sum()
-    ax.pie(function_summary, labels=function_summary.index, autopct='%1.1f%%', startangle=90)
+    function_summary2 = df.groupby('Function')['Quantity_mg_per_tablet'].sum()
+    ax.pie(function_summary2, labels=function_summary2.index, autopct='%1.1f%%', startangle=90)
     ax.set_title('Distribution by Function')
     buf = io.BytesIO()
     plt.tight_layout()
     plt.savefig(buf, format='png')
     buf.seek(0)
-    charts['function_distribution'] = buf.read()
+    export_charts['function_distribution'] = buf.read()
     plt.close(fig)
-    # Bar chart - Quality reference distribution
-    fig, ax = plt.subplots(figsize=(6,4))
+    # Plotly: Bar chart - Quality reference distribution
     quality_counts = df['Quality_Reference'].value_counts()
+    fig_quality = px.bar(x=quality_counts.index, y=quality_counts.values,
+                        title='Quality Reference Distribution',
+                        labels={'x': 'Quality Reference', 'y': 'Count'},
+                        color=quality_counts.index, color_discrete_sequence=px.colors.qualitative.Set3)
+    plotly_charts['quality_references'] = fig_quality
+    # Matplotlib: Bar chart
+    fig, ax = plt.subplots(figsize=(6,4))
     quality_counts.plot(kind='bar', ax=ax, color='lightgreen')
     ax.set_title('Quality Reference Distribution')
     ax.set_ylabel('Count')
@@ -194,9 +212,15 @@ def create_charts(df):
     plt.tight_layout()
     plt.savefig(buf, format='png')
     buf.seek(0)
-    charts['quality_references'] = buf.read()
+    export_charts['quality_references'] = buf.read()
     plt.close(fig)
-    # Scatter plot - Component weight vs function
+    # Plotly: Scatter plot - Component weight vs function
+    fig_scatter = px.scatter(df, x='Function', y='Quantity_mg_per_tablet', 
+                            size='Quantity_mg_per_tablet', color='Quality_Reference',
+                            title='Component Weight vs Function',
+                            hover_data=['Component'], color_discrete_sequence=px.colors.qualitative.Set3)
+    plotly_charts['weight_vs_function'] = fig_scatter
+    # Matplotlib: Scatter plot
     fig, ax = plt.subplots(figsize=(6,4))
     for func in df['Function'].unique():
         subset = df[df['Function'] == func]
@@ -208,12 +232,11 @@ def create_charts(df):
     plt.tight_layout()
     plt.savefig(buf, format='png')
     buf.seek(0)
-    charts['weight_vs_function'] = buf.read()
+    export_charts['weight_vs_function'] = buf.read()
     plt.close(fig)
-    return charts
+    return plotly_charts, export_charts
 
 def save_chart_as_image(fig_or_bytes, chart_name):
-    """For Matplotlib, fig_or_bytes is already image bytes. Return as is."""
     if isinstance(fig_or_bytes, bytes):
         return fig_or_bytes
     return None
@@ -686,34 +709,34 @@ def main():
         
         # Create and display charts
         st.markdown('<h2 class="section-header">📈 Data Visualizations</h2>', unsafe_allow_html=True)
-        charts = create_charts(df)
+        plotly_charts, export_charts = create_charts(df)
         
         # Display charts in tabs
         chart_tabs = st.tabs(["Component Quantities", "Function Distribution", "Quality References", "Weight vs Function"])
         
         with chart_tabs[0]:
-            st.image(charts['component_quantities'], caption="Component Quantities per Tablet", use_column_width=True)
+            st.plotly_chart(plotly_charts['component_quantities'], use_container_width=True)
             if 'include_component_quantities' in locals() and include_component_quantities:
                 st.success("✅ This chart will be included in the report")
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
         with chart_tabs[1]:
-            st.image(charts['function_distribution'], caption="Distribution by Function", use_column_width=True)
+            st.plotly_chart(plotly_charts['function_distribution'], use_container_width=True)
             if 'include_function_distribution' in locals() and include_function_distribution:
                 st.success("✅ This chart will be included in the report")
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
         with chart_tabs[2]:
-            st.image(charts['quality_references'], caption="Quality Reference Distribution", use_column_width=True)
+            st.plotly_chart(plotly_charts['quality_references'], use_container_width=True)
             if 'include_quality_references' in locals() and include_quality_references:
                 st.success("✅ This chart will be included in the report")
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
         with chart_tabs[3]:
-            st.image(charts['weight_vs_function'], caption="Component Weight vs Function", use_column_width=True)
+            st.plotly_chart(plotly_charts['weight_vs_function'], use_container_width=True)
             if 'include_weight_vs_function' in locals() and include_weight_vs_function:
                 st.success("✅ This chart will be included in the report")
             else:
@@ -787,7 +810,7 @@ def main():
                 st.session_state.df = df
                 st.session_state.uploaded_images = uploaded_images if uploaded_images else []
                 st.session_state.notes = notes
-                st.session_state.charts = charts
+                st.session_state.charts = export_charts
                 st.session_state.include_component_quantities = include_component_quantities
                 st.session_state.include_function_distribution = include_function_distribution
                 st.session_state.include_quality_references = include_quality_references
