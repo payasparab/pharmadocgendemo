@@ -1,5 +1,6 @@
 # Credentials and secrets
 credentials.py
+localized_app.py
 .streamlit/secrets.toml
 .env
 
