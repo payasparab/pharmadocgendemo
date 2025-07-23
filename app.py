@@ -132,9 +132,20 @@ def load_google_drive_credentials():
     try:
         # First, try to load from Streamlit secrets
         if hasattr(st.secrets, 'google_drive_api'):
-            credentials_dict = st.secrets.google_drive_api
+            credentials_dict = {
+                "type": st.secrets.google_drive_api.type,
+                "project_id": st.secrets.google_drive_api.project_id,
+                "private_key_id": st.secrets.google_drive_api.private_key_id,
+                "private_key": st.secrets.google_drive_api.private_key,
+                "client_email": st.secrets.google_drive_api.client_email,
+                "client_id": st.secrets.google_drive_api.client_id,
+                "auth_uri": st.secrets.google_drive_api.auth_uri,
+                "token_uri": st.secrets.google_drive_api.token_uri,
+                "auth_provider_x509_cert_url": st.secrets.google_drive_api.auth_provider_x509_cert_url,
+                "client_x509_cert_url": st.secrets.google_drive_api.client_x509_cert_url
+            }
             creds = service_account.Credentials.from_service_account_info(
-                credentials_dict, 
+                credentials_dict,
                 scopes=['https://www.googleapis.com/auth/drive']
             )
             return creds
