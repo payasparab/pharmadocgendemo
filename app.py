@@ -368,11 +368,15 @@ def get_folder_structure_recursive(service, parent_folder_id: str = None, max_de
         return []
 
 def display_folder_structure(structure, level=0):
-    """Display folder structure with top 3 levels shown directly, then nested expanders"""
+    """Display folder structure with top 3 levels only"""
     if not structure:
         return
     
     for folder in structure:
+        # Stop at level 3
+        if level >= 3:
+            return
+            
         # Create indentation with proper spacing
         indent = "&nbsp;&nbsp;&nbsp;&nbsp;" * level
         
@@ -389,29 +393,13 @@ def display_folder_structure(structure, level=0):
         # Create Google Drive link
         drive_link = folder.get('webViewLink', f"https://drive.google.com/drive/folders/{folder['id']}")
         
-        # For levels 0-2, display directly
-        if level < 3:
-            # Display folder with proper indentation and clickable link
-            folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
-            st.markdown(folder_html, unsafe_allow_html=True)
-            
-            # Recursively display children
-            if folder['children']:
-                display_folder_structure(folder['children'], level + 1)
+        # Display folder with proper indentation and clickable link
+        folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
+        st.markdown(folder_html, unsafe_allow_html=True)
         
-        # For level 3 and beyond, use expanders
-        else:
-            if folder['children']:
-                # Folder has children - use expander
-                with st.expander(f"{emoji} {folder['name']}", expanded=False):
-                    st.markdown(f"<a href='{drive_link}' target='_blank'><strong>🔗 Open in Google Drive</strong></a>", unsafe_allow_html=True)
-                    st.write(f"📁 Folder ID: {folder['id']}")
-                    # Recursively display children
-                    display_folder_structure(folder['children'], level + 1)
-            else:
-                # No children - display as simple text
-                folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
-                st.markdown(folder_html, unsafe_allow_html=True)
+        # Recursively display children (only up to level 2)
+        if folder['children'] and level < 2:
+            display_folder_structure(folder['children'], level + 1)
 
 def filter_out_folders(structure, exclude_ids):
     """Recursively filter out folders with specified IDs"""
@@ -584,26 +572,59 @@ def create_campaign_folder_structure(service, campaign_name: str, molecule_code:
         
         # Check if project folder already exists
         existing_project = check_existing_project_folder(service, molecule_code, parent_folder_id)
-        if existing_project:
-            st.warning(f"⚠️ Project folder '{existing_project['name']}' already exists!")
-            return None
         
-        # Create main project folder
-        project_folder_name = f"Project; Molecule {molecule_code}"
-        project_folder = create_google_drive_folder(service, project_folder_name, parent_folder_id, shared_drive_id)
-        if not project_folder:
+        if existing_project:
+            # Use existing project folder
+            project_folder = existing_project
+            st.info(f"✅ Using existing project folder: {project_folder['name']}")
+        else:
+            # Create new project folder
+            project_folder_name = f"Project; Molecule {molecule_code}"
+            project_folder = create_google_drive_folder(service, project_folder_name, parent_folder_id, shared_drive_id)
+            if not project_folder:
+                return None
+            st.success(f"✅ Created new project folder: {project_folder['name']}")
+        
+        # Check if campaign folder already exists
+        campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_name})"
+        campaign_query = f"'{project_folder['id']}' in parents and name = '{campaign_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        campaign_results = service.files().list(
+            q=campaign_query,
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        existing_campaigns = campaign_results.get('files', [])
+        
+        if existing_campaigns:
+            st.warning(f"⚠️ Campaign folder '{campaign_folder_name}' already exists!")
             return None
         
         # Create campaign folder
-        campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_name})"
         campaign_folder = create_google_drive_folder(service, campaign_folder_name, project_folder['id'], shared_drive_id)
         if not campaign_folder:
             return None
         
-        # Create Draft AI Reg Document folder
-        reg_doc_folder = create_google_drive_folder(service, "Draft AI Reg Document", project_folder['id'], shared_drive_id)
-        if not reg_doc_folder:
-            return None
+        # Check if Draft AI Reg Document folder exists, create if not
+        reg_doc_query = f"'{project_folder['id']}' in parents and name = 'Draft AI Reg Document' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        reg_doc_results = service.files().list(
+            q=reg_doc_query,
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        existing_reg_docs = reg_doc_results.get('files', [])
+        
+        if existing_reg_docs:
+            reg_doc_folder = existing_reg_docs[0]
+            st.info(f"✅ Using existing Draft AI Reg Document folder")
+        else:
+            reg_doc_folder = create_google_drive_folder(service, "Draft AI Reg Document", project_folder['id'], shared_drive_id)
+            if not reg_doc_folder:
+                return None
+            st.success(f"✅ Created new Draft AI Reg Document folder")
         
         # Create Pre and Post folders under campaign
         pre_folder = create_google_drive_folder(service, "Pre", campaign_folder['id'], shared_drive_id)
@@ -621,13 +642,40 @@ def create_campaign_folder_structure(service, campaign_name: str, molecule_code:
                         for status in statuses:
                             create_google_drive_folder(service, status, dept_folder['id'], shared_drive_id)
         
-        # Create regulatory document folders
+        # Create regulatory document folders (only if they don't exist)
         reg_types = ["IND", "IMPD", "Canada"]
         for reg_type in reg_types:
-            reg_type_folder = create_google_drive_folder(service, reg_type, reg_doc_folder['id'], shared_drive_id)
+            # Check if reg type folder exists
+            reg_type_query = f"'{reg_doc_folder['id']}' in parents and name = '{reg_type}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            reg_type_results = service.files().list(
+                q=reg_type_query,
+                fields="files(id, name)",
+                supportsAllDrives=True,
+                supportsTeamDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
+            existing_reg_types = reg_type_results.get('files', [])
+            
+            if existing_reg_types:
+                reg_type_folder = existing_reg_types[0]
+            else:
+                reg_type_folder = create_google_drive_folder(service, reg_type, reg_doc_folder['id'], shared_drive_id)
+            
             if reg_type_folder:
+                # Create status folders only if they don't exist
                 for status in statuses:
-                    create_google_drive_folder(service, status, reg_type_folder['id'], shared_drive_id)
+                    status_query = f"'{reg_type_folder['id']}' in parents and name = '{status}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+                    status_results = service.files().list(
+                        q=status_query,
+                        fields="files(id, name)",
+                        supportsAllDrives=True,
+                        supportsTeamDrives=True,
+                        includeItemsFromAllDrives=True
+                    ).execute()
+                    existing_statuses = status_results.get('files', [])
+                    
+                    if not existing_statuses:
+                        create_google_drive_folder(service, status, reg_type_folder['id'], shared_drive_id)
         
         return {
             'project_folder': project_folder,
@@ -881,13 +929,26 @@ def parse_ai_response(ai_text: str, product_code: str) -> Dict[str, str]:
 def export_to_word_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
                              product_code: str, dosage_form: str,
                              uploaded_images: List, notes: str,
-                             charts: Dict, chart_selections: Dict[str, bool]) -> Document:
+                             charts: Dict, chart_selections: Dict[str, bool],
+                             molecule_code: str = None, campaign_number: str = None) -> Document:
     """Export regulatory document to Word format"""
     doc = Document()
     
-    # Add title
-    title = doc.add_heading('Section 3.2.P.1 Description and Composition of the Drug Product', 0)
+    # Add title with campaign information
+    title_text = 'Section 3.2.P.1 Description and Composition of the Drug Product'
+    if molecule_code and campaign_number:
+        title_text += f' - Molecule {molecule_code} Campaign {campaign_number}'
+    title = doc.add_heading(title_text, 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Add campaign information header
+    if molecule_code and campaign_number:
+        doc.add_heading(f'Project Information', level=1)
+        doc.add_paragraph(f'Molecule Code: {molecule_code}')
+        doc.add_paragraph(f'Campaign Number: {campaign_number}')
+        doc.add_paragraph(f'Product Code: {product_code}')
+        doc.add_paragraph(f'Dosage Form: {dosage_form}')
+        doc.add_paragraph()  # Add space
     
     # Add description section
     doc.add_heading('3.2.P.1.1 Description of the Dosage Form', level=1)
@@ -991,14 +1052,15 @@ def export_to_word_regulatory(df: pd.DataFrame, sections: Dict[str, str],
 def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
                             product_code: str, dosage_form: str,
                             uploaded_images: List, notes: str,
-                            charts: Dict, chart_selections: Dict[str, bool]):
+                            charts: Dict, chart_selections: Dict[str, bool],
+                            molecule_code: str = None, campaign_number: str = None):
     """Export regulatory document to PDF format"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
     
-    # Add title
+    # Add title with campaign information
     title_style = ParagraphStyle(
         'CustomTitle',
         parent=styles['Heading1'],
@@ -1006,8 +1068,20 @@ def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str],
         spaceAfter=30,
         alignment=1
     )
-    story.append(Paragraph('Section 3.2.P.1 Description and Composition of the Drug Product', title_style))
+    title_text = 'Section 3.2.P.1 Description and Composition of the Drug Product'
+    if molecule_code and campaign_number:
+        title_text += f' - Molecule {molecule_code} Campaign {campaign_number}'
+    story.append(Paragraph(title_text, title_style))
     story.append(Spacer(1, 12))
+    
+    # Add campaign information header
+    if molecule_code and campaign_number:
+        story.append(Paragraph('Project Information', styles['Heading2']))
+        story.append(Paragraph(f'Molecule Code: {molecule_code}', styles['Normal']))
+        story.append(Paragraph(f'Campaign Number: {campaign_number}', styles['Normal']))
+        story.append(Paragraph(f'Product Code: {product_code}', styles['Normal']))
+        story.append(Paragraph(f'Dosage Form: {dosage_form}', styles['Normal']))
+        story.append(Spacer(1, 12))
     
     # Add description section
     story.append(Paragraph('3.2.P.1.1 Description of the Dosage Form', styles['Heading2']))
@@ -1425,7 +1499,9 @@ def main():
                             image_bytes,
                             st.session_state.notes,
                             st.session_state.charts,
-                            chart_selections
+                            chart_selections,
+                            molecule_code,
+                            campaign_number
                         )
                         
                         # Save to bytes
@@ -1437,7 +1513,7 @@ def main():
                         st.download_button(
                             label="📥 Download Word Document",
                             data=doc_buffer.getvalue(),
-                            file_name=f"Section_3.2.P.1_{product_code}.docx",
+                            file_name=f"Section_3.2.P.1_{product_code}_Campaign_{campaign_number}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
             
@@ -1460,7 +1536,9 @@ def main():
                             image_bytes,
                             st.session_state.notes,
                             st.session_state.charts,
-                            chart_selections
+                            chart_selections,
+                            molecule_code,
+                            campaign_number
                         )
                         pdf_buffer.seek(0)
                         
@@ -1468,7 +1546,7 @@ def main():
                         st.download_button(
                             label="📥 Download PDF Document",
                             data=pdf_buffer.getvalue(),
-                            file_name=f"Section_3.2.P.1_{product_code}.pdf",
+                            file_name=f"Section_3.2.P.1_{product_code}_Campaign_{campaign_number}.pdf",
                             mime="application/pdf"
                         )
             
@@ -1508,7 +1586,9 @@ def main():
                                         image_bytes,
                                         st.session_state.notes,
                                         st.session_state.charts,
-                                        chart_selections
+                                        chart_selections,
+                                        upload_molecule_code,
+                                        upload_campaign_number
                                     )
                                     
                                     # Save to bytes
@@ -1516,8 +1596,8 @@ def main():
                                     doc.save(doc_buffer)
                                     doc_buffer.seek(0)
                                     
-                                    # Upload to Google Drive
-                                    file_name = f"Section_3.2.P.1_{product_code}.docx"
+                                    # Upload to Google Drive with campaign number
+                                    file_name = f"Section_3.2.P.1_{product_code}_Campaign_{upload_campaign_number}.docx"
                                     uploaded_file = upload_file_to_google_drive(
                                         drive_service,
                                         doc_buffer.getvalue(),
@@ -1560,12 +1640,14 @@ def main():
                                         image_bytes,
                                         st.session_state.notes,
                                         st.session_state.charts,
-                                        chart_selections
+                                        chart_selections,
+                                        upload_molecule_code,
+                                        upload_campaign_number
                                     )
                                     pdf_buffer.seek(0)
                                     
-                                    # Upload to Google Drive
-                                    file_name = f"Section_3.2.P.1_{product_code}.pdf"
+                                    # Upload to Google Drive with campaign number
+                                    file_name = f"Section_3.2.P.1_{product_code}_Campaign_{upload_campaign_number}.pdf"
                                     uploaded_file = upload_file_to_google_drive(
                                         drive_service,
                                         pdf_buffer.getvalue(),
