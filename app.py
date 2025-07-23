@@ -484,7 +484,13 @@ def find_target_folder(service, molecule_code: str, campaign_number: str = None)
         
         # Find Draft AI Reg Document folder
         reg_doc_query = f"'{project_folder['id']}' in parents and name = 'Draft AI Reg Document' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-        reg_doc_results = service.files().list(q=reg_doc_query, fields="files(id, name)").execute()
+        reg_doc_results = service.files().list(
+            q=reg_doc_query, 
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         reg_doc_folders = reg_doc_results.get('files', [])
         
         if not reg_doc_folders:
@@ -495,7 +501,13 @@ def find_target_folder(service, molecule_code: str, campaign_number: str = None)
         
         # Find IND folder
         ind_query = f"'{reg_doc_folder['id']}' in parents and name = 'IND' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-        ind_results = service.files().list(q=ind_query, fields="files(id, name)").execute()
+        ind_results = service.files().list(
+            q=ind_query, 
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         ind_folders = ind_results.get('files', [])
         
         if not ind_folders:
@@ -506,7 +518,13 @@ def find_target_folder(service, molecule_code: str, campaign_number: str = None)
         
         # Find Draft folder
         draft_query = f"'{ind_folder['id']}' in parents and name = 'Draft' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-        draft_results = service.files().list(q=draft_query, fields="files(id, name)").execute()
+        draft_results = service.files().list(
+            q=draft_query, 
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         draft_folders = draft_results.get('files', [])
         
         if not draft_folders:
