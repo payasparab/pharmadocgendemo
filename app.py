@@ -166,10 +166,12 @@ def get_shared_drive_id(service):
             # Return the first shared drive ID
             return shared_drives[0]['id']
         else:
-            st.error("❌ No shared drives found. Please create a shared drive and add the service account as a member.")
+            st.warning("⚠️ No shared drives found. File uploads may fail due to service account storage limitations.")
+            st.info("💡 To fix this: Create a shared drive and add the service account as a member with 'Editor' permissions")
             return None
     except Exception as e:
-        st.error(f"Error getting shared drive: {e}")
+        st.warning(f"⚠️ Error accessing shared drives: {e}")
+        st.info("💡 This may be due to permissions. Try creating a shared drive manually.")
         return None
 
 def initialize_google_drive_service():
@@ -305,7 +307,7 @@ def get_folder_structure_recursive(service, parent_folder_id: str = None, max_de
         if parent_folder_id:
             query = f"'{parent_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         else:
-            query = f"'{parent_folder_id or '1HU0olha8hDM2neE8aSuO7JQB3htZwUvW'}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            query = f"'{parent_folder_id or '0ALsvNdCE73XrUk9PVA'}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         
         results = service.files().list(q=query, fields="files(id, name, parents, trashed, createdTime, modifiedTime, owners, webViewLink)").execute()
         folders = results.get('files', [])
@@ -474,7 +476,7 @@ def check_existing_project_folder(service, molecule_code: str, parent_folder_id:
         if parent_folder_id:
             query = f"'{parent_folder_id}' in parents and name = '{project_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         else:
-            query = f"'{parent_folder_id or '1HU0olha8hDM2neE8aSuO7JQB3htZwUvW'}' in parents and name = '{project_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            query = f"'{parent_folder_id or '0ALsvNdCE73XrUk9PVA'}' in parents and name = '{project_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         
         results = service.files().list(q=query, fields="files(id, name)").execute()
         existing_folders = results.get('files', [])
@@ -540,7 +542,7 @@ def create_campaign_folder_structure(service, campaign_name: str, molecule_code:
     try:
         # Set default parent folder ID if not provided
         if not parent_folder_id:
-            parent_folder_id = '1HU0olha8hDM2neE8aSuO7JQB3htZwUvW'
+            parent_folder_id = '0ALsvNdCE73XrUk9PVA'  # New shared drive root folder
         
         # Check if project folder already exists
         existing_project = check_existing_project_folder(service, molecule_code, parent_folder_id)
@@ -1093,11 +1095,11 @@ def main():
     # Get shared drive ID if available
     shared_drive_id = None
     if drive_service:
+        # Display service account email for shared drive setup
+        creds = load_google_drive_credentials()
+        
         shared_drive_id = get_shared_drive_id(drive_service)
-        if shared_drive_id:
-            st.info(f"📁 Using Shared Drive ID: {shared_drive_id}")
-        else:
-            st.warning("⚠️ No shared drive found. File uploads may fail due to service account storage limitations.")
+        st.session_state.shared_drive_id = shared_drive_id
     
     # Top configuration section
     st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
@@ -1137,6 +1139,12 @@ def main():
     else:
         st.error("❌ Google Drive API not connected")
         st.info("ℹ️ Add 'google_drive_api' to Streamlit secrets or place 'aaitdemoharmony-3945571299f1.json' in the app directory")
+    
+    if st.session_state.shared_drive_id:
+        st.info(f"📁 Using Shared Drive ID: {st.session_state.shared_drive_id}")
+    else:
+        st.warning("⚠️ No shared drive found. File uploads may fail due to service account storage limitations.")
+        st.info("💡 Create a shared drive and add the service account email above as a member with 'Editor' permissions") 
     
     # Display current folder structure if connected
     if drive_service:
