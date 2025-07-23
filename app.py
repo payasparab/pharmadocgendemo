@@ -22,6 +22,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.io as pio
 import numpy as np
+import json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # Page configuration
 st.set_page_config(
@@ -122,6 +125,103 @@ def load_openai_api_key():
         import credentials
         return credentials.OPENAI_API_KEY
     except:
+        return None
+
+def load_google_drive_credentials():
+    """Load Google Drive API credentials from local JSON file or Streamlit secrets"""
+    try:
+        # First, try to load from Streamlit secrets
+        if hasattr(st.secrets, 'google_drive_api'):
+            credentials_dict = st.secrets.google_drive_api
+            creds = service_account.Credentials.from_service_account_info(
+                credentials_dict, 
+                scopes=['https://www.googleapis.com/auth/drive']
+            )
+            return creds
+        
+        # If not in secrets, try to load from local JSON file
+        json_file_path = 'aaitdemoharmony-3945571299f1.json'
+        if os.path.exists(json_file_path):
+            creds = service_account.Credentials.from_service_account_file(
+                json_file_path, 
+                scopes=['https://www.googleapis.com/auth/drive']
+            )
+            return creds
+        
+        # If neither exists, return None
+        return None
+        
+    except Exception as e:
+        st.error(f"Error loading Google Drive credentials: {e}")
+        return None
+
+def initialize_google_drive_service():
+    """Initialize Google Drive service with credentials"""
+    creds = load_google_drive_credentials()
+    if creds:
+        try:
+            service = build('drive', 'v3', credentials=creds)
+            return service
+        except Exception as e:
+            st.error(f"Error initializing Google Drive service: {e}")
+            return None
+    return None
+
+def list_google_drive_folders(service, parent_folder_id: str = None):
+    """List folders in Google Drive, optionally within a specific parent folder"""
+    try:
+        if parent_folder_id:
+            query = f"'{parent_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        else:
+            query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        
+        results = service.files().list(q=query, fields="files(id, name, createdTime)").execute()
+        folders = results.get('files', [])
+        return folders
+    except Exception as e:
+        st.error(f"Error listing folders: {e}")
+        return []
+
+def create_google_drive_folder(service, folder_name: str, parent_folder_id: str = None):
+    """Create a new folder in Google Drive"""
+    try:
+        folder_metadata = {
+            'name': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        
+        if parent_folder_id:
+            folder_metadata['parents'] = [parent_folder_id]
+        
+        folder = service.files().create(body=folder_metadata, fields='id, name').execute()
+        return folder
+    except Exception as e:
+        st.error(f"Error creating folder: {e}")
+        return None
+
+def upload_file_to_google_drive(service, file_data: bytes, file_name: str, mime_type: str, folder_id: str = None):
+    """Upload a file to Google Drive"""
+    try:
+        file_metadata = {
+            'name': file_name
+        }
+        
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+        
+        # Create file stream
+        file_stream = io.BytesIO(file_data)
+        
+        # Upload file
+        file = service.files().create(
+            body=file_metadata,
+            media_body=file_stream,
+            fields='id, name, webViewLink'
+        ).execute()
+        
+        return file
+    except Exception as e:
+        st.error(f"Error uploading file: {e}")
         return None
 
 def initialize_openai():
@@ -635,6 +735,58 @@ def main():
     # AI configuration
     st.sidebar.header("AI Configuration")
     use_ai = st.sidebar.checkbox("Use AI for text generation", value=True)
+    
+    # Google Drive configuration
+    st.sidebar.header("Google Drive Integration")
+    
+    # Initialize Google Drive service
+    drive_service = initialize_google_drive_service()
+    
+    if drive_service:
+        st.sidebar.success("✅ Google Drive connected")
+        
+        # Test Google Drive functionality
+        if st.sidebar.button("🔍 Test Google Drive Connection"):
+            with st.spinner("Testing Google Drive connection..."):
+                try:
+                    # List root folders
+                    folders = list_google_drive_folders(drive_service)
+                    if folders:
+                        st.sidebar.write("📁 Available folders:")
+                        for folder in folders[:5]:  # Show first 5 folders
+                            st.sidebar.write(f"- {folder['name']}")
+                        if len(folders) > 5:
+                            st.sidebar.write(f"... and {len(folders) - 5} more")
+                    else:
+                        st.sidebar.write("📁 No folders found")
+                    
+                    st.sidebar.success("✅ Google Drive connection successful!")
+                except Exception as e:
+                    st.sidebar.error(f"❌ Error: {e}")
+        
+        # Create new folder functionality
+        st.sidebar.subheader("Create New Folder")
+        new_folder_name = st.sidebar.text_input("Folder Name", "Regulatory_Documents")
+        parent_folder_id = st.sidebar.text_input("Parent Folder ID (optional)", "")
+        
+        if st.sidebar.button("📁 Create Folder"):
+            if new_folder_name:
+                with st.spinner("Creating folder..."):
+                    try:
+                        folder = create_google_drive_folder(drive_service, new_folder_name, parent_folder_id if parent_folder_id else None)
+                        if folder:
+                            st.sidebar.success(f"✅ Created folder: {folder['name']} (ID: {folder['id']})")
+                        else:
+                            st.sidebar.error("❌ Failed to create folder")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Error: {e}")
+            else:
+                st.sidebar.warning("Please enter a folder name")
+    else:
+        st.sidebar.error("❌ Google Drive not connected")
+        st.sidebar.info("ℹ️ To connect Google Drive, either:")
+        st.sidebar.info("1. Add 'google_drive_api' to Streamlit secrets")
+        st.sidebar.info("2. Place 'aaitdemoharmony-3945571299f1.json' in the app directory")
     
     # Data input section
     st.markdown('<h2 class="section-header">📊 Composition Data</h2>', unsafe_allow_html=True)

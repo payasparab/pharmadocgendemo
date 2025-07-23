@@ -3,6 +3,7 @@ credentials.py
 localized_app.py
 .streamlit/secrets.toml
 .env
+aaitdemoharmony-3945571299f1.json
 
 # Python
 __pycache__/
