@@ -28,10 +28,10 @@ from googleapiclient.discovery import build
 
 # Page configuration
 st.set_page_config(
-    page_title="Regulatory Document Generator",
-    page_icon="💊",
+    page_title="Document Generator and Folder Management System",
+    page_icon="📁",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS for better styling
@@ -155,6 +155,23 @@ def load_google_drive_credentials():
         st.error(f"Error loading Google Drive credentials: {e}")
         return None
 
+def get_shared_drive_id(service):
+    """Get the first available shared drive ID"""
+    try:
+        # List shared drives
+        drives = service.drives().list(pageSize=10).execute()
+        shared_drives = drives.get('drives', [])
+        
+        if shared_drives:
+            # Return the first shared drive ID
+            return shared_drives[0]['id']
+        else:
+            st.error("❌ No shared drives found. Please create a shared drive and add the service account as a member.")
+            return None
+    except Exception as e:
+        st.error(f"Error getting shared drive: {e}")
+        return None
+
 def initialize_google_drive_service():
     """Initialize Google Drive service with credentials"""
     creds = load_google_drive_credentials()
@@ -175,15 +192,18 @@ def list_google_drive_folders(service, parent_folder_id: str = None):
         else:
             query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         
-        results = service.files().list(q=query, fields="files(id, name, createdTime)").execute()
+        results = service.files().list(q=query, fields="files(id, name, createdTime, trashed)").execute()
         folders = results.get('files', [])
-        return folders
+        
+        # Filter out trashed folders
+        active_folders = [folder for folder in folders if not folder.get('trashed', False)]
+        return active_folders
     except Exception as e:
         st.error(f"Error listing folders: {e}")
         return []
 
-def create_google_drive_folder(service, folder_name: str, parent_folder_id: str = None):
-    """Create a new folder in Google Drive"""
+def create_google_drive_folder(service, folder_name: str, parent_folder_id: str = None, shared_drive_id: str = None):
+    """Create a new folder in Google Drive (shared drive or personal)"""
     try:
         folder_metadata = {
             'name': folder_name,
@@ -193,14 +213,219 @@ def create_google_drive_folder(service, folder_name: str, parent_folder_id: str 
         if parent_folder_id:
             folder_metadata['parents'] = [parent_folder_id]
         
-        folder = service.files().create(body=folder_metadata, fields='id, name').execute()
+        # If using shared drive, specify the drive ID
+        if shared_drive_id:
+            folder = service.files().create(
+                body=folder_metadata, 
+                fields='id, name',
+                supportsAllDrives=True,
+                supportsTeamDrives=True
+            ).execute()
+        else:
+            folder = service.files().create(body=folder_metadata, fields='id, name').execute()
+        
         return folder
     except Exception as e:
-        st.error(f"Error creating folder: {e}")
+        st.error(f"Error creating folder '{folder_name}': {e}")
         return None
 
-def upload_file_to_google_drive(service, file_data: bytes, file_name: str, mime_type: str, folder_id: str = None):
-    """Upload a file to Google Drive"""
+def get_folder_structure(service, parent_folder_id: str = None, max_depth: int = 3):
+    """Get folder structure up to 3 levels deep"""
+    try:
+        if parent_folder_id:
+            query = f"'{parent_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        else:
+            query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        
+        results = service.files().list(q=query, fields="files(id, name, parents, trashed)").execute()
+        folders = results.get('files', [])
+        
+        # Filter out folders that are trashed
+        active_folders = [folder for folder in folders if not folder.get('trashed', False)]
+        
+        structure = []
+        for folder in active_folders:
+            folder_info = {
+                'id': folder['id'],
+                'name': folder['name'],
+                'level': 1,
+                'children': []
+            }
+            
+            # Get second level
+            if max_depth > 1:
+                level2_query = f"'{folder['id']}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+                level2_results = service.files().list(q=level2_query, fields="files(id, name, parents, trashed)").execute()
+                level2_folders = level2_results.get('files', [])
+                
+                # Filter level 2 folders
+                active_level2_folders = [f for f in level2_folders if not f.get('trashed', False)]
+                
+                for level2_folder in active_level2_folders:
+                    level2_info = {
+                        'id': level2_folder['id'],
+                        'name': level2_folder['name'],
+                        'level': 2,
+                        'children': []
+                    }
+                    
+                    # Get third level
+                    if max_depth > 2:
+                        level3_query = f"'{level2_folder['id']}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+                        level3_results = service.files().list(q=level3_query, fields="files(id, name, parents, trashed)").execute()
+                        level3_folders = level3_results.get('files', [])
+                        
+                        # Filter level 3 folders
+                        active_level3_folders = [f for f in level3_folders if not f.get('trashed', False)]
+                        
+                        for level3_folder in active_level3_folders:
+                            level3_info = {
+                                'id': level3_folder['id'],
+                                'name': level3_folder['name'],
+                                'level': 3,
+                                'children': []
+                            }
+                            level2_info['children'].append(level3_info)
+                    
+                    folder_info['children'].append(level2_info)
+            
+            structure.append(folder_info)
+        
+        return structure
+    except Exception as e:
+        st.error(f"Error getting folder structure: {e}")
+        return []
+
+def get_folder_structure_recursive(service, parent_folder_id: str = None, max_depth: int = 3, current_depth: int = 0):
+    """Get folder structure recursively to ensure proper hierarchy"""
+    try:
+        if current_depth >= max_depth:
+            return []
+        
+        if parent_folder_id:
+            query = f"'{parent_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        else:
+            query = f"'{parent_folder_id or '1HU0olha8hDM2neE8aSuO7JQB3htZwUvW'}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        
+        results = service.files().list(q=query, fields="files(id, name, parents, trashed, createdTime, modifiedTime, owners, webViewLink)").execute()
+        folders = results.get('files', [])
+        
+        # Enhanced filtering for truly active folders
+        active_folders = []
+        for folder in folders:
+            # Check if folder is not trashed
+            if folder.get('trashed', False):
+                continue
+                
+            # Check if folder has valid ownership (not orphaned)
+            if not folder.get('owners'):
+                continue
+                
+            # Check if folder has been modified recently (indicates it's still active)
+            # Skip folders that haven't been modified in the last 30 days (likely deleted)
+            try:
+                modified_time = folder.get('modifiedTime')
+                if modified_time:
+                    from datetime import datetime, timezone
+                    modified_date = datetime.fromisoformat(modified_time.replace('Z', '+00:00'))
+                    current_date = datetime.now(timezone.utc)
+                    days_since_modified = (current_date - modified_date).days
+                    
+                    # If folder hasn't been modified in 30 days and is empty, consider it deleted
+                    if days_since_modified > 30:
+                        # Check if folder is empty
+                        try:
+                            contents = service.files().list(q=f"'{folder['id']}' in parents", fields="files(id)").execute()
+                            if not contents.get('files'):
+                                # Empty folder that hasn't been modified in 30 days - likely deleted
+                                continue
+                        except:
+                            pass  # If we can't check contents, assume it's active
+            except:
+                pass  # If we can't parse the date, assume it's active
+            
+            active_folders.append(folder)
+        
+        structure = []
+        for folder in active_folders:
+            folder_info = {
+                'id': folder['id'],
+                'name': folder['name'],
+                'level': current_depth + 1,
+                'webViewLink': folder.get('webViewLink', f"https://drive.google.com/drive/folders/{folder['id']}"),
+                'children': []
+            }
+            
+            # Recursively get children
+            if current_depth < max_depth - 1:
+                children = get_folder_structure_recursive(service, folder['id'], max_depth, current_depth + 1)
+                folder_info['children'] = children
+            
+            structure.append(folder_info)
+        
+        return structure
+    except Exception as e:
+        st.error(f"Error getting folder structure: {e}")
+        return []
+
+def display_folder_structure(structure, level=0):
+    """Display folder structure with proper indentation and clickable links"""
+    if not structure:
+        return
+    
+    for folder in structure:
+        # Create indentation with proper spacing
+        indent = "&nbsp;&nbsp;&nbsp;&nbsp;" * level
+        
+        # Choose emoji based on level
+        if level == 0:
+            emoji = "📁"
+        elif level == 1:
+            emoji = "📂"
+        elif level == 2:
+            emoji = "📄"
+        else:
+            emoji = "📋"
+        
+        # Create Google Drive link
+        drive_link = folder.get('webViewLink', f"https://drive.google.com/drive/folders/{folder['id']}")
+        
+        # Display folder with proper indentation and clickable link
+        folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
+        st.markdown(folder_html, unsafe_allow_html=True)
+        
+        # Recursively display children (only up to 3 levels)
+        if folder['children'] and level < 2:
+            display_folder_structure(folder['children'], level + 1)
+
+def filter_out_folders(structure, exclude_ids):
+    """Recursively filter out folders with specified IDs"""
+    if not structure:
+        return []
+    
+    filtered_structure = []
+    for folder in structure:
+        # Skip if this folder should be excluded
+        if folder['id'] in exclude_ids:
+            continue
+        
+        # Recursively filter children
+        filtered_children = filter_out_folders(folder['children'], exclude_ids)
+        
+        # Create new folder info with filtered children
+        filtered_folder = {
+            'id': folder['id'],
+            'name': folder['name'],
+            'level': folder['level'],
+            'children': filtered_children
+        }
+        
+        filtered_structure.append(filtered_folder)
+    
+    return filtered_structure
+
+def upload_file_to_google_drive(service, file_data: bytes, file_name: str, mime_type: str, folder_id: str = None, shared_drive_id: str = None):
+    """Upload a file to Google Drive (shared drive or personal)"""
     try:
         file_metadata = {
             'name': file_name
@@ -212,16 +437,166 @@ def upload_file_to_google_drive(service, file_data: bytes, file_name: str, mime_
         # Create file stream
         file_stream = io.BytesIO(file_data)
         
-        # Upload file
-        file = service.files().create(
-            body=file_metadata,
-            media_body=file_stream,
-            fields='id, name, webViewLink'
-        ).execute()
+        # Create MediaUpload object
+        from googleapiclient.http import MediaIoBaseUpload
+        media = MediaIoBaseUpload(
+            file_stream,
+            mimetype=mime_type,
+            resumable=True
+        )
+        
+        # Upload file with shared drive support if needed
+        if shared_drive_id:
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, name, webViewLink',
+                supportsAllDrives=True,
+                supportsTeamDrives=True
+            ).execute()
+        else:
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, name, webViewLink'
+            ).execute()
         
         return file
     except Exception as e:
         st.error(f"Error uploading file: {e}")
+        return None
+
+def check_existing_project_folder(service, molecule_code: str, parent_folder_id: str = None):
+    """Check if a project folder with the same molecule code already exists"""
+    try:
+        project_folder_name = f"Project; Molecule {molecule_code}"
+        
+        if parent_folder_id:
+            query = f"'{parent_folder_id}' in parents and name = '{project_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        else:
+            query = f"'{parent_folder_id or '1HU0olha8hDM2neE8aSuO7JQB3htZwUvW'}' in parents and name = '{project_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        existing_folders = results.get('files', [])
+        
+        return existing_folders[0] if existing_folders else None
+    except Exception as e:
+        st.error(f"Error checking existing project folder: {e}")
+        return None
+
+def find_target_folder(service, molecule_code: str, campaign_number: str = None):
+    """Find the Draft AI Reg Document -> IND -> Draft folder for the specified project"""
+    try:
+        # Find the project folder
+        project_folder = check_existing_project_folder(service, molecule_code)
+        if not project_folder:
+            st.error(f"❌ Project folder for Molecule {molecule_code} not found!")
+            return None, None
+        
+        # Find Draft AI Reg Document folder
+        reg_doc_query = f"'{project_folder['id']}' in parents and name = 'Draft AI Reg Document' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        reg_doc_results = service.files().list(q=reg_doc_query, fields="files(id, name)").execute()
+        reg_doc_folders = reg_doc_results.get('files', [])
+        
+        if not reg_doc_folders:
+            st.error(f"❌ Draft AI Reg Document folder not found in project {molecule_code}!")
+            return None, None
+        
+        reg_doc_folder = reg_doc_folders[0]
+        
+        # Find IND folder
+        ind_query = f"'{reg_doc_folder['id']}' in parents and name = 'IND' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        ind_results = service.files().list(q=ind_query, fields="files(id, name)").execute()
+        ind_folders = ind_results.get('files', [])
+        
+        if not ind_folders:
+            st.error(f"❌ IND folder not found in Draft AI Reg Document!")
+            return None, None
+        
+        ind_folder = ind_folders[0]
+        
+        # Find Draft folder
+        draft_query = f"'{ind_folder['id']}' in parents and name = 'Draft' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        draft_results = service.files().list(q=draft_query, fields="files(id, name)").execute()
+        draft_folders = draft_results.get('files', [])
+        
+        if not draft_folders:
+            st.error(f"❌ Draft folder not found in IND!")
+            return None, None
+        
+        draft_folder = draft_folders[0]
+        
+        # Build the full path for display
+        full_path = f"Project; Molecule {molecule_code} → Draft AI Reg Document → IND → Draft"
+        
+        return draft_folder, full_path
+        
+    except Exception as e:
+        st.error(f"Error finding target folder: {e}")
+        return None, None
+
+def create_campaign_folder_structure(service, campaign_name: str, molecule_code: str, parent_folder_id: str = None, shared_drive_id: str = None):
+    """Create the complete campaign folder structure as shown in the image"""
+    try:
+        # Set default parent folder ID if not provided
+        if not parent_folder_id:
+            parent_folder_id = '1HU0olha8hDM2neE8aSuO7JQB3htZwUvW'
+        
+        # Check if project folder already exists
+        existing_project = check_existing_project_folder(service, molecule_code, parent_folder_id)
+        if existing_project:
+            st.warning(f"⚠️ Project folder '{existing_project['name']}' already exists!")
+            return None
+        
+        # Create main project folder
+        project_folder_name = f"Project; Molecule {molecule_code}"
+        project_folder = create_google_drive_folder(service, project_folder_name, parent_folder_id, shared_drive_id)
+        if not project_folder:
+            return None
+        
+        # Create campaign folder
+        campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_name})"
+        campaign_folder = create_google_drive_folder(service, campaign_folder_name, project_folder['id'], shared_drive_id)
+        if not campaign_folder:
+            return None
+        
+        # Create Draft AI Reg Document folder
+        reg_doc_folder = create_google_drive_folder(service, "Draft AI Reg Document", project_folder['id'], shared_drive_id)
+        if not reg_doc_folder:
+            return None
+        
+        # Create Pre and Post folders under campaign
+        pre_folder = create_google_drive_folder(service, "Pre", campaign_folder['id'], shared_drive_id)
+        post_folder = create_google_drive_folder(service, "Post", campaign_folder['id'], shared_drive_id)
+        
+        # Create department folders under Pre and Post
+        departments = ["mfg", "Anal", "Stability", "CTM"]
+        statuses = ["Draft", "Review", "Approved"]
+        
+        for phase_folder in [pre_folder, post_folder]:
+            if phase_folder:
+                for dept in departments:
+                    dept_folder = create_google_drive_folder(service, dept, phase_folder['id'], shared_drive_id)
+                    if dept_folder:
+                        for status in statuses:
+                            create_google_drive_folder(service, status, dept_folder['id'], shared_drive_id)
+        
+        # Create regulatory document folders
+        reg_types = ["IND", "IMPD", "Canada"]
+        for reg_type in reg_types:
+            reg_type_folder = create_google_drive_folder(service, reg_type, reg_doc_folder['id'], shared_drive_id)
+            if reg_type_folder:
+                for status in statuses:
+                    create_google_drive_folder(service, status, reg_type_folder['id'], shared_drive_id)
+        
+        return {
+            'project_folder': project_folder,
+            'campaign_folder': campaign_folder,
+            'reg_doc_folder': reg_doc_folder
+        }
+        
+    except Exception as e:
+        st.error(f"Error creating campaign folder structure: {e}")
         return None
 
 def initialize_openai():
@@ -466,7 +841,7 @@ def parse_ai_response(ai_text: str, product_code: str) -> Dict[str, str]:
 def export_to_word_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
                              product_code: str, dosage_form: str,
                              uploaded_images: List, notes: str,
-                             charts: Dict) -> Document:
+                             charts: Dict, chart_selections: Dict[str, bool]) -> Document:
     """Export regulatory document to Word format"""
     doc = Document()
     
@@ -576,7 +951,7 @@ def export_to_word_regulatory(df: pd.DataFrame, sections: Dict[str, str],
 def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
                             product_code: str, dosage_form: str,
                             uploaded_images: List, notes: str,
-                            charts: Dict):
+                            charts: Dict, chart_selections: Dict[str, bool]):
     """Export regulatory document to PDF format"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -709,93 +1084,132 @@ def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str],
 
 def main():
     # Header
-    st.markdown('<h1 class="main-header">💊 Regulatory Document Generator</h1>', unsafe_allow_html=True)
-    st.markdown("Generate Section 3.2.P.1 'Description and Composition of the Drug Product' for IND submissions")
+    st.markdown('<h1 class="main-header">📁 Document Generator and Folder Management System</h1>', unsafe_allow_html=True)
+    st.markdown("Generate regulatory documents and manage Google Drive folder structures for pharmaceutical projects")
     
-    # Sidebar for configuration
-    st.sidebar.header("Product Configuration")
+    # Initialize services
+    drive_service = initialize_google_drive_service()
     
+    # Get shared drive ID if available
+    shared_drive_id = None
+    if drive_service:
+        shared_drive_id = get_shared_drive_id(drive_service)
+        if shared_drive_id:
+            st.info(f"📁 Using Shared Drive ID: {shared_drive_id}")
+        else:
+            st.warning("⚠️ No shared drive found. File uploads may fail due to service account storage limitations.")
+    
+    # Top configuration section
+    st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
+    
+    st.subheader("📋 Product Configuration")
     # Drug selection
-    selected_drug = st.sidebar.selectbox("Select Drug", list(DRUG_DATABASE.keys()))
+    selected_drug = st.selectbox("Select Drug", list(DRUG_DATABASE.keys()), key="selected_drug")
     drug_info = DRUG_DATABASE[selected_drug]
     
     # Display drug information
-    st.sidebar.markdown('<div class="drug-info">', unsafe_allow_html=True)
-    st.sidebar.write(f"**Drug Class:** {drug_info['class']}")
-    st.sidebar.write(f"**Indication:** {drug_info['indication']}")
-    st.sidebar.write(f"**Available Strengths:** {drug_info['strength']}")
-    st.sidebar.write(f"**Manufacturer:** {drug_info['manufacturer']}")
-    st.sidebar.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="drug-info">', unsafe_allow_html=True)
+    st.write(f"**Drug Class:** {drug_info['class']}")
+    st.write(f"**Indication:** {drug_info['indication']}")
+    st.write(f"**Available Strengths:** {drug_info['strength']}")
+    st.write(f"**Manufacturer:** {drug_info['manufacturer']}")
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Product information
-    product_code = st.sidebar.text_input("Product Code", f"{selected_drug}-001")
-    dosage_form = st.sidebar.text_input("Dosage Form", drug_info['dosage_form'])
-    mechanism_of_action = st.sidebar.text_area("Mechanism of Action", drug_info['mechanism'])
+    product_code = st.text_input("Product Code", f"{selected_drug}-001", key="product_code")
+    dosage_form = st.text_input("Dosage Form", drug_info['dosage_form'], key="dosage_form")
+    mechanism_of_action = st.text_area("Mechanism of Action", drug_info['mechanism'], height=100, key="mechanism_of_action")
     
-    # AI configuration
-    st.sidebar.header("AI Configuration")
-    use_ai = st.sidebar.checkbox("Use AI for text generation", value=True)
+    # System Status Section
+    st.markdown('<h2 class="section-header">🔧 System Status</h2>', unsafe_allow_html=True)
     
-    # Google Drive configuration
-    st.sidebar.header("Google Drive Integration")
-    
-    # Initialize Google Drive service
-    drive_service = initialize_google_drive_service()
-    
-    if drive_service:
-        st.sidebar.success("✅ Google Drive connected")
-        
-        # Test Google Drive functionality
-        if st.sidebar.button("🔍 Test Google Drive Connection"):
-            with st.spinner("Testing Google Drive connection..."):
-                try:
-                    # List root folders
-                    folders = list_google_drive_folders(drive_service)
-                    if folders:
-                        st.sidebar.write("📁 Available folders:")
-                        for folder in folders[:5]:  # Show first 5 folders
-                            st.sidebar.write(f"- {folder['name']}")
-                        if len(folders) > 5:
-                            st.sidebar.write(f"... and {len(folders) - 5} more")
-                    else:
-                        st.sidebar.write("📁 No folders found")
-                    
-                    st.sidebar.success("✅ Google Drive connection successful!")
-                except Exception as e:
-                    st.sidebar.error(f"❌ Error: {e}")
-        
-        # Create new folder functionality
-        st.sidebar.subheader("Create New Folder")
-        new_folder_name = st.sidebar.text_input("Folder Name", "Regulatory_Documents")
-        parent_folder_id = st.sidebar.text_input("Parent Folder ID (optional)", "")
-        
-        if st.sidebar.button("📁 Create Folder"):
-            if new_folder_name:
-                with st.spinner("Creating folder..."):
-                    try:
-                        folder = create_google_drive_folder(drive_service, new_folder_name, parent_folder_id if parent_folder_id else None)
-                        if folder:
-                            st.sidebar.success(f"✅ Created folder: {folder['name']} (ID: {folder['id']})")
-                        else:
-                            st.sidebar.error("❌ Failed to create folder")
-                    except Exception as e:
-                        st.sidebar.error(f"❌ Error: {e}")
-            else:
-                st.sidebar.warning("Please enter a folder name")
+    # Check OpenAI status
+    openai_client = initialize_openai()
+    if openai_client:
+        st.success("✅ OpenAI API connected")
     else:
-        st.sidebar.error("❌ Google Drive not connected")
-        st.sidebar.info("ℹ️ To connect Google Drive, either:")
-        st.sidebar.info("1. Add 'google_drive_api' to Streamlit secrets")
-        st.sidebar.info("2. Place 'aaitdemoharmony-3945571299f1.json' in the app directory")
+        st.error("❌ OpenAI API not connected")
+        st.info("ℹ️ Add 'OPENAI_API_KEY' to credentials.py or set it in Streamlit secrets")
+    
+    # Check Google Drive status
+    if drive_service:
+        st.success("✅ Google Drive API connected")
+    else:
+        st.error("❌ Google Drive API not connected")
+        st.info("ℹ️ Add 'google_drive_api' to Streamlit secrets or place 'aaitdemoharmony-3945571299f1.json' in the app directory")
+    
+    # Display current folder structure if connected
+    if drive_service:
+        st.markdown('<h2 class="section-header">📂 Current Google Drive Structure</h2>', unsafe_allow_html=True)
+        
+        #show_debug = st.checkbox("Show debug info", key="show_debug")
+        
+        if st.button("📁 Load Structure", key="load_structure"):
+            with st.spinner("Loading folder structure..."):
+                try:
+                    structure = get_folder_structure_recursive(drive_service)
+                    
+                    if structure:
+                        st.session_state.folder_structure = structure
+                        st.success(f"✅ Loaded {len(structure)} folders")
+                        
+
+                    else:
+                        st.info("📁 No folders found")
+                        st.session_state.folder_structure = None
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+                    st.session_state.folder_structure = None
+        
+        if 'folder_structure' in st.session_state and st.session_state.folder_structure:
+            st.subheader("📂 Folder Structure")
+            with st.expander("View Folder Structure", expanded=True):
+                display_folder_structure(st.session_state.folder_structure)
+        else:
+            st.info("Click 'Load Structure' to view your Google Drive folders")
+        
+        # Campaign Management Section
+        st.markdown('<h2 class="section-header">🚀 Campaign Management</h2>', unsafe_allow_html=True)
+        
+        st.subheader("📋 Campaign Details")
+        molecule_code = st.text_input("Molecule Code", "THPG001", key="molecule_code")
+        campaign_number = st.text_input("Campaign Number", "3", key="campaign_number")
+        
+        st.subheader("🚀 Create Campaign")
+        if st.button("🚀 Create Campaign Structure", type="primary", key="create_campaign"):
+            if molecule_code and campaign_number:
+                with st.spinner("Creating campaign folder structure..."):
+                    try:
+                        result = create_campaign_folder_structure(
+                            drive_service, 
+                            campaign_number, 
+                            molecule_code,
+                            None,  # parent_folder_id
+                            shared_drive_id
+                        )
+                        if result:
+                            st.success(f"✅ Campaign structure created successfully!")
+                            st.write(f"**Project Folder:** {result['project_folder']['name']}")
+                            st.write(f"**Campaign Folder:** {result['campaign_folder']['name']}")
+                            st.write(f"**Reg Doc Folder:** {result['reg_doc_folder']['name']}")
+                            
+                            # Refresh the folder structure
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to create campaign structure")
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
+            else:
+                st.warning("Please enter both Molecule Code and Campaign Number")
     
     # Data input section
     st.markdown('<h2 class="section-header">📊 Composition Data</h2>', unsafe_allow_html=True)
     
     # Option to upload CSV or use sample data
-    data_option = st.radio("Choose data source:", ["Use Sample Data", "Upload CSV File"])
+    data_option = st.radio("Choose data source:", ["Use Sample Data", "Upload CSV File"], key="data_option")
     
     if data_option == "Upload CSV File":
-        uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+        uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="csv_uploader")
         if uploaded_file is not None:
             df = pd.read_csv(uploaded_file)
             st.success(f"✅ Loaded {len(df)} components")
@@ -850,44 +1264,55 @@ def main():
             else:
                 st.info("ℹ️ Use the chart selection options to include this chart in the report")
         
-        # Additional content section
-        st.markdown('<h2 class="section-header">📎 Additional Content</h2>', unsafe_allow_html=True)
+        # Initialize variables for additional content
+        uploaded_images = []
+        notes = ""
+        compliance_level = "FDA"
+        document_version = "1.0"
+        include_component_quantities = True
+        include_function_distribution = True
+        include_quality_references = True
+        include_weight_vs_function = True
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📷 Upload Images")
-            uploaded_images = st.file_uploader("Upload supporting images", 
-                                             type=['png', 'jpg', 'jpeg'], 
-                                             accept_multiple_files=True)
+        # Additional content section (collapsible)
+        with st.expander("📎 Additional Content", expanded=False):
+            col1, col2 = st.columns(2)
             
-            if uploaded_images:
-                st.write(f"✅ {len(uploaded_images)} image(s) uploaded")
-                for i, img in enumerate(uploaded_images):
-                    st.image(img, caption=f"Image {i+1}: {img.name}", width=200)
-        
-        with col2:
-            st.subheader("📝 Additional Notes")
-            notes = st.text_area("Add any additional notes or comments for the document", 
-                                height=150,
-                                placeholder="Enter any additional information, observations, or notes...")
+            with col1:
+                st.subheader("📷 Upload Images")
+                uploaded_images = st.file_uploader("Upload supporting images", 
+                                                 type=['png', 'jpg', 'jpeg'], 
+                                                 accept_multiple_files=True,
+                                                 key="image_uploader")
+                
+                if uploaded_images:
+                    st.write(f"✅ {len(uploaded_images)} image(s) uploaded")
+                    for i, img in enumerate(uploaded_images):
+                        st.image(img, caption=f"Image {i+1}: {img.name}", width=200)
             
-            st.subheader("🔧 Document Options")
-            compliance_level = st.selectbox("Compliance level:", ["FDA", "EMA", "ICH", "Other"])
-            document_version = st.text_input("Document version:", "1.0")
-            
-            st.subheader("📊 Chart Selection for Report")
-            include_component_quantities = st.checkbox("Include Component Quantities Chart", value=True)
-            include_function_distribution = st.checkbox("Include Function Distribution Chart", value=True)
-            include_quality_references = st.checkbox("Include Quality References Chart", value=True)
-            include_weight_vs_function = st.checkbox("Include Weight vs Function Chart", value=True)
+            with col2:
+                st.subheader("📝 Additional Notes")
+                notes = st.text_area("Add any additional notes or comments for the document", 
+                                    height=150,
+                                    placeholder="Enter any additional information, observations, or notes...",
+                                    key="additional_notes")
+                
+                st.subheader("🔧 Document Options")
+                compliance_level = st.selectbox("Compliance level:", ["FDA", "EMA", "ICH", "Other"], key="compliance_level")
+                document_version = st.text_input("Document version:", "1.0", key="document_version")
+                
+                st.subheader("📊 Chart Selection for Report")
+                include_component_quantities = st.checkbox("Include Component Quantities Chart", value=True, key="include_component_quantities")
+                include_function_distribution = st.checkbox("Include Function Distribution Chart", value=True, key="include_function_distribution")
+                include_quality_references = st.checkbox("Include Quality References Chart", value=True, key="include_quality_references")
+                include_weight_vs_function = st.checkbox("Include Weight vs Function Chart", value=True, key="include_weight_vs_function")
         
         # Generate regulatory text
         st.markdown('<h2 class="section-header">📝 Generated Regulatory Text</h2>', unsafe_allow_html=True)
         
-        if st.button("🔄 Generate Regulatory Text", type="primary"):
+        if st.button("🔄 Generate Regulatory Text", type="primary", key="generate_text"):
             with st.spinner("Generating regulatory text..."):
-                if use_ai and initialize_openai():
+                if initialize_openai():
                     sections = generate_regulatory_text_with_ai(
                         product_code, dosage_form, df, mechanism_of_action, drug_info
                     )
@@ -899,10 +1324,6 @@ def main():
                 st.session_state.uploaded_images = uploaded_images if uploaded_images else []
                 st.session_state.notes = notes
                 st.session_state.charts = export_charts
-                st.session_state.include_component_quantities = include_component_quantities
-                st.session_state.include_function_distribution = include_function_distribution
-                st.session_state.include_quality_references = include_quality_references
-                st.session_state.include_weight_vs_function = include_weight_vs_function
                 st.session_state.text_generated = True
 
         # Always display the current text if it exists
@@ -925,11 +1346,19 @@ def main():
         if 'sections' in st.session_state:
             st.markdown('<h2 class="section-header">💾 Export Document</h2>', unsafe_allow_html=True)
             
-            col1, col2 = st.columns(2)
+            # Create chart selections dictionary (shared by all export functions)
+            chart_selections = {
+                'component_quantities': include_component_quantities,
+                'function_distribution': include_function_distribution,
+                'quality_references': include_quality_references,
+                'weight_vs_function': include_weight_vs_function
+            }
+            
+            col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.subheader("Export to Word (.docx)")
-                if st.button("📄 Generate Word Document", type="primary"):
+                if st.button("📄 Generate Word Document", type="primary", key="generate_word"):
                     with st.spinner("Generating Word document..."):
                         # Convert uploaded images to bytes
                         image_bytes = []
@@ -945,7 +1374,8 @@ def main():
                             dosage_form,
                             image_bytes,
                             st.session_state.notes,
-                            st.session_state.charts
+                            st.session_state.charts,
+                            chart_selections
                         )
                         
                         # Save to bytes
@@ -963,7 +1393,7 @@ def main():
             
             with col2:
                 st.subheader("Export to PDF")
-                if st.button("📄 Generate PDF Document", type="primary"):
+                if st.button("📄 Generate PDF Document", type="primary", key="generate_pdf"):
                     with st.spinner("Generating PDF document..."):
                         # Convert uploaded images to bytes
                         image_bytes = []
@@ -979,7 +1409,8 @@ def main():
                             dosage_form,
                             image_bytes,
                             st.session_state.notes,
-                            st.session_state.charts
+                            st.session_state.charts,
+                            chart_selections
                         )
                         pdf_buffer.seek(0)
                         
@@ -990,6 +1421,125 @@ def main():
                             file_name=f"Section_3.2.P.1_{product_code}.pdf",
                             mime="application/pdf"
                         )
+            
+            with col3:
+                st.subheader("📁 Upload to Google Drive")
+                if drive_service:
+                    # Get molecule code and campaign number for upload
+                    upload_molecule_code = st.text_input("Molecule Code for upload:", molecule_code, key="upload_molecule_code")
+                    upload_campaign_number = st.text_input("Campaign Number for upload:", campaign_number, key="upload_campaign_number")
+                    
+                    # Find target folder
+                    target_folder, folder_path = find_target_folder(drive_service, upload_molecule_code, upload_campaign_number)
+                    
+                    if target_folder:
+                        st.success(f"✅ Target folder found: {folder_path}")
+                        st.info(f"📁 Folder ID: {target_folder['id']}")
+                        st.info(f"🔗 Folder Link: https://drive.google.com/drive/folders/{target_folder['id']}")
+                    else:
+                        st.warning("⚠️ Target folder not found. Please ensure the project and campaign structure exists.")
+                    
+                    if st.button("☁️ Upload Word to Drive", type="primary", key="upload_word"):
+                        if target_folder:
+                            with st.spinner("Generating and uploading Word document..."):
+                                try:
+                                    # Generate document
+                                    image_bytes = []
+                                    if st.session_state.uploaded_images:
+                                        for img in st.session_state.uploaded_images:
+                                            image_bytes.append(img.read())
+                                            img.seek(0)
+                                    
+                                    doc = export_to_word_regulatory(
+                                        st.session_state.df, 
+                                        st.session_state.sections, 
+                                        product_code, 
+                                        dosage_form,
+                                        image_bytes,
+                                        st.session_state.notes,
+                                        st.session_state.charts,
+                                        chart_selections
+                                    )
+                                    
+                                    # Save to bytes
+                                    doc_buffer = io.BytesIO()
+                                    doc.save(doc_buffer)
+                                    doc_buffer.seek(0)
+                                    
+                                    # Upload to Google Drive
+                                    file_name = f"Section_3.2.P.1_{product_code}.docx"
+                                    uploaded_file = upload_file_to_google_drive(
+                                        drive_service,
+                                        doc_buffer.getvalue(),
+                                        file_name,
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        target_folder['id'],
+                                        shared_drive_id
+                                    )
+                                    
+                                    if uploaded_file:
+                                        st.success(f"✅ Uploaded to Google Drive: {uploaded_file['name']}")
+                                        st.write(f"**Project:** Molecule {upload_molecule_code}")
+                                        st.write(f"**Campaign:** {upload_campaign_number}")
+                                        st.write(f"**Upload Path:** {folder_path}")
+                                        st.write(f"**File Link:** {uploaded_file.get('webViewLink', 'No link available')}")
+                                        st.write(f"**Folder Link:** https://drive.google.com/drive/folders/{target_folder['id']}")
+                                    else:
+                                        st.error("❌ Failed to upload to Google Drive")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {e}")
+                        else:
+                            st.warning("Please ensure the target folder is found before uploading")
+                    
+                    if st.button("☁️ Upload PDF to Drive", type="primary", key="upload_pdf"):
+                        if target_folder:
+                            with st.spinner("Generating and uploading PDF document..."):
+                                try:
+                                    # Generate document
+                                    image_bytes = []
+                                    if st.session_state.uploaded_images:
+                                        for img in st.session_state.uploaded_images:
+                                            image_bytes.append(img.read())
+                                            img.seek(0)
+                                    
+                                    pdf_buffer = export_to_pdf_regulatory(
+                                        st.session_state.df, 
+                                        st.session_state.sections, 
+                                        product_code, 
+                                        dosage_form,
+                                        image_bytes,
+                                        st.session_state.notes,
+                                        st.session_state.charts,
+                                        chart_selections
+                                    )
+                                    pdf_buffer.seek(0)
+                                    
+                                    # Upload to Google Drive
+                                    file_name = f"Section_3.2.P.1_{product_code}.pdf"
+                                    uploaded_file = upload_file_to_google_drive(
+                                        drive_service,
+                                        pdf_buffer.getvalue(),
+                                        file_name,
+                                        "application/pdf",
+                                        target_folder['id'],
+                                        shared_drive_id
+                                    )
+                                    
+                                    if uploaded_file:
+                                        st.success(f"✅ Uploaded to Google Drive: {uploaded_file['name']}")
+                                        st.write(f"**Project:** Molecule {upload_molecule_code}")
+                                        st.write(f"**Campaign:** {upload_campaign_number}")
+                                        st.write(f"**Upload Path:** {folder_path}")
+                                        st.write(f"**File Link:** {uploaded_file.get('webViewLink', 'No link available')}")
+                                        st.write(f"**Folder Link:** https://drive.google.com/drive/folders/{target_folder['id']}")
+                                    else:
+                                        st.error("❌ Failed to upload to Google Drive")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {e}")
+                        else:
+                            st.warning("Please ensure the target folder is found before uploading")
+                else:
+                    st.info("Connect to Google Drive to upload documents")
 
 if __name__ == "__main__":
     main()
