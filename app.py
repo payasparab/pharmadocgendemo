@@ -309,43 +309,23 @@ def get_folder_structure_recursive(service, parent_folder_id: str = None, max_de
         else:
             query = f"'{parent_folder_id or '0ALsvNdCE73XrUk9PVA'}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         
-        results = service.files().list(q=query, fields="files(id, name, parents, trashed, createdTime, modifiedTime, owners, webViewLink)").execute()
+        # For shared drives, we need to include the shared drive parameters
+        # Always use shared drive parameters when we're in a shared drive context
+        results = service.files().list(
+            q=query, 
+            fields="files(id, name, parents, trashed, createdTime, modifiedTime, owners, webViewLink)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         folders = results.get('files', [])
         
-        # Enhanced filtering for truly active folders
+        # Simplified filtering - just check if not trashed
         active_folders = []
         for folder in folders:
             # Check if folder is not trashed
             if folder.get('trashed', False):
                 continue
-                
-            # Check if folder has valid ownership (not orphaned)
-            if not folder.get('owners'):
-                continue
-                
-            # Check if folder has been modified recently (indicates it's still active)
-            # Skip folders that haven't been modified in the last 30 days (likely deleted)
-            try:
-                modified_time = folder.get('modifiedTime')
-                if modified_time:
-                    from datetime import datetime, timezone
-                    modified_date = datetime.fromisoformat(modified_time.replace('Z', '+00:00'))
-                    current_date = datetime.now(timezone.utc)
-                    days_since_modified = (current_date - modified_date).days
-                    
-                    # If folder hasn't been modified in 30 days and is empty, consider it deleted
-                    if days_since_modified > 30:
-                        # Check if folder is empty
-                        try:
-                            contents = service.files().list(q=f"'{folder['id']}' in parents", fields="files(id)").execute()
-                            if not contents.get('files'):
-                                # Empty folder that hasn't been modified in 30 days - likely deleted
-                                continue
-                        except:
-                            pass  # If we can't check contents, assume it's active
-            except:
-                pass  # If we can't parse the date, assume it's active
-            
             active_folders.append(folder)
         
         structure = []
@@ -358,7 +338,7 @@ def get_folder_structure_recursive(service, parent_folder_id: str = None, max_de
                 'children': []
             }
             
-            # Recursively get children
+            # Recursively get children - always try to get them
             if current_depth < max_depth - 1:
                 children = get_folder_structure_recursive(service, folder['id'], max_depth, current_depth + 1)
                 folder_info['children'] = children
@@ -396,8 +376,8 @@ def display_folder_structure(structure, level=0):
         folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
         st.markdown(folder_html, unsafe_allow_html=True)
         
-        # Recursively display children (only up to 3 levels)
-        if folder['children'] and level < 2:
+        # Recursively display children (show up to 4 levels for full hierarchy)
+        if folder['children'] and level < 4:
             display_folder_structure(folder['children'], level + 1)
 
 def filter_out_folders(structure, exclude_ids):
@@ -478,7 +458,14 @@ def check_existing_project_folder(service, molecule_code: str, parent_folder_id:
         else:
             query = f"'{parent_folder_id or '0ALsvNdCE73XrUk9PVA'}' in parents and name = '{project_folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         
-        results = service.files().list(q=query, fields="files(id, name)").execute()
+        # Use shared drive parameters for all queries
+        results = service.files().list(
+            q=query, 
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            supportsTeamDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         existing_folders = results.get('files', [])
         
         return existing_folders[0] if existing_folders else None
@@ -489,8 +476,8 @@ def check_existing_project_folder(service, molecule_code: str, parent_folder_id:
 def find_target_folder(service, molecule_code: str, campaign_number: str = None):
     """Find the Draft AI Reg Document -> IND -> Draft folder for the specified project"""
     try:
-        # Find the project folder
-        project_folder = check_existing_project_folder(service, molecule_code)
+        # Find the project folder - use shared drive context
+        project_folder = check_existing_project_folder(service, molecule_code, '0ALsvNdCE73XrUk9PVA')
         if not project_folder:
             st.error(f"❌ Project folder for Molecule {molecule_code} not found!")
             return None, None
@@ -1155,7 +1142,9 @@ def main():
         if st.button("📁 Load Structure", key="load_structure"):
             with st.spinner("Loading folder structure..."):
                 try:
-                    structure = get_folder_structure_recursive(drive_service)
+                    # Pass the shared drive ID to ensure proper folder listing
+                    # Increase max_depth to 5 to get full hierarchy
+                    structure = get_folder_structure_recursive(drive_service, st.session_state.shared_drive_id, max_depth=5)
                     
                     if structure:
                         st.session_state.folder_structure = structure
@@ -1173,6 +1162,8 @@ def main():
             st.subheader("📂 Folder Structure")
             with st.expander("View Folder Structure", expanded=True):
                 display_folder_structure(st.session_state.folder_structure)
+            
+
         else:
             st.info("Click 'Load Structure' to view your Google Drive folders")
         
