@@ -120,13 +120,18 @@ DRUG_DATABASE = {
 
 def load_openai_api_key():
     """Load OpenAI API key from Streamlit secrets"""
+    # Try to load from credentials.py first
     try:
-        # Try to load from Streamlit secrets
-        if hasattr(st.secrets, 'OPENAI_API_KEY'):
-            return st.secrets.OPENAI_API_KEY
-        return None
+        import credentials
+        return credentials.OPENAI_API_KEY
     except:
-        return None
+        # If credentials.py fails, try Streamlit secrets
+        try:
+            if hasattr(st.secrets, 'OPENAI_API_KEY'):
+                return st.secrets.OPENAI_API_KEY
+        except:
+            pass
+    return None
 
 def load_google_drive_credentials():
     """Load Google Drive API credentials from local JSON file or Streamlit secrets"""
@@ -363,7 +368,7 @@ def get_folder_structure_recursive(service, parent_folder_id: str = None, max_de
         return []
 
 def display_folder_structure(structure, level=0):
-    """Display folder structure with proper indentation and clickable links"""
+    """Display folder structure with top 3 levels shown directly, then nested expanders"""
     if not structure:
         return
     
@@ -384,13 +389,29 @@ def display_folder_structure(structure, level=0):
         # Create Google Drive link
         drive_link = folder.get('webViewLink', f"https://drive.google.com/drive/folders/{folder['id']}")
         
-        # Display folder with proper indentation and clickable link
-        folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
-        st.markdown(folder_html, unsafe_allow_html=True)
+        # For levels 0-2, display directly
+        if level < 3:
+            # Display folder with proper indentation and clickable link
+            folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
+            st.markdown(folder_html, unsafe_allow_html=True)
+            
+            # Recursively display children
+            if folder['children']:
+                display_folder_structure(folder['children'], level + 1)
         
-        # Recursively display children (show up to 4 levels for full hierarchy)
-        if folder['children'] and level < 4:
-            display_folder_structure(folder['children'], level + 1)
+        # For level 3 and beyond, use expanders
+        else:
+            if folder['children']:
+                # Folder has children - use expander
+                with st.expander(f"{emoji} {folder['name']}", expanded=False):
+                    st.markdown(f"<a href='{drive_link}' target='_blank'><strong>🔗 Open in Google Drive</strong></a>", unsafe_allow_html=True)
+                    st.write(f"📁 Folder ID: {folder['id']}")
+                    # Recursively display children
+                    display_folder_structure(folder['children'], level + 1)
+            else:
+                # No children - display as simple text
+                folder_html = f"{indent}{emoji} <a href='{drive_link}' target='_blank'><strong>{folder['name']}</strong></a>"
+                st.markdown(folder_html, unsafe_allow_html=True)
 
 def filter_out_folders(structure, exclude_ids):
     """Recursively filter out folders with specified IDs"""
