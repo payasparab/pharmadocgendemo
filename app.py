@@ -119,11 +119,12 @@ DRUG_DATABASE = {
 }
 
 def load_openai_api_key():
-    """Load OpenAI API key from credentials file"""
+    """Load OpenAI API key from Streamlit secrets"""
     try:
-        # Try local credentials file
-        import credentials
-        return credentials.OPENAI_API_KEY
+        # Try to load from Streamlit secrets
+        if hasattr(st.secrets, 'OPENAI_API_KEY'):
+            return st.secrets.OPENAI_API_KEY
+        return None
     except:
         return None
 
