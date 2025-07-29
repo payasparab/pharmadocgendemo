@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: document-generation-api
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements_flask.txt
+    startCommand: gunicorn flask_api:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: GOOGLE_DRIVE_TYPE
+        sync: false
+      - key: GOOGLE_DRIVE_PROJECT_ID
+        sync: false
+      - key: GOOGLE_DRIVE_PRIVATE_KEY_ID
+        sync: false
+      - key: GOOGLE_DRIVE_PRIVATE_KEY
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_EMAIL
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_DRIVE_AUTH_URI
+        sync: false
+      - key: GOOGLE_DRIVE_TOKEN_URI
+        sync: false
+      - key: GOOGLE_DRIVE_AUTH_PROVIDER_X509_CERT_URL
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_X509_CERT_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false 
