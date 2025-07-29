@@ -436,6 +436,8 @@ def background_create_folders(molecule_code: str, campaign_number: str):
     """Background function to create folder structure"""
     job_key = f"{molecule_code}_{campaign_number}"
     
+    logger.info(f"BACKGROUND: Starting folder creation for {job_key}")
+    
     try:
         # Update status to running
         job_status[job_key] = {
@@ -445,9 +447,13 @@ def background_create_folders(molecule_code: str, campaign_number: str):
             "progress": 0
         }
         
+        logger.info(f"BACKGROUND: Status updated to running for {job_key}")
+        
         # Initialize Google Drive service
+        logger.info(f"BACKGROUND: Initializing Google Drive service for {job_key}")
         drive_service = initialize_google_drive_service()
         if not drive_service:
+            logger.error(f"BACKGROUND: Failed to initialize Google Drive service for {job_key}")
             job_status[job_key] = {
                 "status": "failed",
                 "message": "Failed to initialize Google Drive service",
@@ -455,6 +461,8 @@ def background_create_folders(molecule_code: str, campaign_number: str):
                 "completed_at": datetime.now().isoformat()
             }
             return
+        
+        logger.info(f"BACKGROUND: Google Drive service initialized for {job_key}")
         
         # Get shared drive ID
         shared_drive_id = get_shared_drive_id(drive_service)
@@ -529,25 +537,53 @@ def health_check():
         "message": "Document Generation API is running"
     })
 
+@app.route('/test-thread', methods=['GET'])
+def test_thread():
+    """Test endpoint to verify threading works"""
+    import time
+    
+    def background_test():
+        logger.info("BACKGROUND TEST: Starting sleep...")
+        time.sleep(10)  # Sleep for 10 seconds
+        logger.info("BACKGROUND TEST: Sleep completed!")
+    
+    logger.info("TEST: Starting background thread test")
+    thread = threading.Thread(target=background_test, daemon=True)
+    thread.start()
+    logger.info("TEST: Background thread started, returning immediately")
+    
+    return jsonify({
+        "status": "success",
+        "message": "Background thread test started",
+        "timestamp": datetime.now().isoformat()
+    })
+
 @app.route('/generate-folder-structure', methods=['POST'])
 def generate_folder_structure():
     """Start background job to generate campaign folder structure"""
     try:
+        logger.info("START: generate_folder_structure route")
+        
         data = request.get_json()
         
         if not data:
+            logger.error("No JSON data provided")
             return jsonify({"error": "No JSON data provided"}), 400
         
         molecule_code = data.get('molecule_code')
         campaign_number = data.get('campaign_number')
         
         if not molecule_code or not campaign_number:
+            logger.error("Missing required parameters")
             return jsonify({"error": "molecule_code and campaign_number are required"}), 400
+        
+        logger.info(f"Processing request for molecule: {molecule_code}, campaign: {campaign_number}")
         
         job_key = f"{molecule_code}_{campaign_number}"
         
         # Check if job is already running
         if job_key in job_status and job_status[job_key]["status"] == "running":
+            logger.info(f"Job already running for {job_key}")
             return jsonify({
                 "status": "already_running",
                 "message": "Folder creation job is already running",
@@ -556,12 +592,15 @@ def generate_folder_structure():
         
         # Check if job is already completed
         if job_key in job_status and job_status[job_key]["status"] == "completed":
+            logger.info(f"Job already completed for {job_key}")
             return jsonify({
                 "status": "already_completed",
                 "message": "Folder structure already exists",
                 "job_key": job_key,
                 "data": job_results.get(job_key)
             })
+        
+        logger.info(f"Starting background thread for {job_key}")
         
         # Start background thread
         thread = threading.Thread(
@@ -570,6 +609,8 @@ def generate_folder_structure():
             daemon=True
         )
         thread.start()
+        
+        logger.info(f"RETURNING: Background job started for {job_key}")
         
         return jsonify({
             "status": "started",
