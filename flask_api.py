@@ -529,6 +529,254 @@ def background_create_folders(molecule_code: str, campaign_number: str):
             "completed_at": datetime.now().isoformat()
         }
 
+def create_sample_pharma_data():
+    """Create sample pharmaceutical composition data"""
+    data = {
+        'Component': [
+            'Active Pharmaceutical Ingredient',
+            'Microcrystalline Cellulose',
+            'Lactose Monohydrate',
+            'Croscarmellose Sodium',
+            'Magnesium Stearate',
+            'Opadry II White'
+        ],
+        'Quality_Reference': ['USP', 'NF', 'NF', 'NF', 'NF', 'NF'],
+        'Function': [
+            'Active Ingredient',
+            'Tablet Diluent',
+            'Tablet Diluent',
+            'Disintegrant',
+            'Lubricant',
+            'Film Coating'
+        ],
+        'Quantity_mg_per_tablet': [25.0, 150.0, 100.0, 10.0, 2.0, 8.0]
+    }
+    return pd.DataFrame(data)
+
+def generate_regulatory_text_with_ai(product_code: str, dosage_form: str, 
+                                   composition_data: pd.DataFrame, 
+                                   mechanism_of_action: str,
+                                   drug_info: Dict,
+                                   additional_instructions: str = "") -> Dict[str, str]:
+    """Generate regulatory text using OpenAI"""
+    client = initialize_openai()
+    if not client:
+        raise RuntimeError("OpenAI API key not found or invalid.")
+    
+    try:
+        # Prepare composition data for AI
+        composition_text = ""
+        total_weight = 0
+        for _, row in composition_data.iterrows():
+            component = row['Component']
+            quality_ref = row['Quality_Reference']
+            function = row['Function']
+            quantity = row['Quantity_mg_per_tablet']
+            total_weight += quantity
+            composition_text += f"- {component} ({quality_ref}): {quantity} mg ({function})\n"
+        composition_text += f"- Total Weight: {total_weight} mg"
+        
+        # Build prompt
+        additional_prompt = ""
+        if additional_instructions.strip():
+            additional_prompt = f"\nAdditional Instructions: {additional_instructions}"
+        
+        prompt = f"""
+You are a regulatory-writing assistant drafting Section 3.2.P.1 "Description and Composition of the Drug Product" for an IND that is currently in Phase II clinical trials. All content must be suitable for direct inclusion in an eCTD‐compliant Module 3 dossier.
+
+Product Information:
+- Product code: {product_code}
+- Dosage form: {dosage_form}
+- Drug class: {drug_info.get('class', 'Not specified')}
+- Indication: {drug_info.get('indication', 'Not specified')}
+- Mechanism of action: {mechanism_of_action}
+
+Composition data:
+{composition_text}{additional_prompt}
+
+Required Output Structure:
+1. 3.2.P.1.1 Description of the Dosage Form
+   - One concise paragraph that identifies the dosage form and strength(s)
+   - States the active‐ingredient concentration(s) clearly
+   - Summarises the mechanism of action in one sentence
+   - Write in the third person, scientific style; do not use marketing language
+
+2. 3.2.P.1.2 Composition
+   - Introductory sentence: "The qualitative and quantitative composition of the {product_code} is provided in Table 1."
+   - Table 1 should be titled 'Composition of the {product_code}'
+   - Include all components with their quality references, functions, and quantities
+   - Do not include markdown or ASCII tables in the text. Only refer to the table by title or as Table 1.
+
+3. 3.2.P.1.3 Pharmaceutical Development
+   - Brief description of formulation development considerations
+   - Reference to key excipient functions
+
+4. 3.2.P.1.4 Manufacturing Process
+   - Overview of the manufacturing process
+   - Key process parameters and controls
+
+Please provide the text in a structured format suitable for regulatory submission.
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a pharmaceutical regulatory writing expert with deep knowledge of FDA and ICH guidelines for IND submissions."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1500,
+            temperature=0.3
+        )
+        
+        ai_text = response.choices[0].message.content
+        sections = parse_ai_response(ai_text, product_code)
+        return sections
+        
+    except Exception as e:
+        raise RuntimeError(f"OpenAI API request failed: {e}")
+
+def parse_ai_response(ai_text: str, product_code: str) -> Dict[str, str]:
+    """Parse AI response into structured sections"""
+    sections = {
+        'description': '',
+        'composition_intro': '',
+        'pharmaceutical_development': '',
+        'manufacturing_process': '',
+        'table_title': f'Composition of the {product_code}'
+    }
+    
+    lines = ai_text.split('\n')
+    current_section = None
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Detect section headers
+        if '3.2.P.1.1' in line or 'Description' in line:
+            current_section = 'description'
+            continue
+        elif '3.2.P.1.2' in line or 'Composition' in line:
+            current_section = 'composition_intro'
+            continue
+        elif '3.2.P.1.3' in line or 'Pharmaceutical Development' in line:
+            current_section = 'pharmaceutical_development'
+            continue
+        elif '3.2.P.1.4' in line or 'Manufacturing Process' in line:
+            current_section = 'manufacturing_process'
+            continue
+        elif line.startswith('Table') or line.startswith('The qualitative'):
+            current_section = 'composition_intro'
+        
+        # Add content to appropriate section
+        if current_section and line:
+            if current_section == 'description':
+                sections['description'] += line + ' '
+            elif current_section == 'composition_intro':
+                sections['composition_intro'] += line + ' '
+            elif current_section == 'pharmaceutical_development':
+                sections['pharmaceutical_development'] += line + ' '
+            elif current_section == 'manufacturing_process':
+                sections['manufacturing_process'] += line + ' '
+    
+    return sections
+
+def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
+                            product_code: str, dosage_form: str,
+                            molecule_code: str = None, campaign_number: str = None):
+    """Export regulatory document to PDF format"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Add title with campaign information
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        spaceAfter=30,
+        alignment=1
+    )
+    title_text = 'Section 3.2.P.1 Description and Composition of the Drug Product'
+    if molecule_code and campaign_number:
+        title_text += f' - Molecule {molecule_code} Campaign {campaign_number}'
+    story.append(Paragraph(title_text, title_style))
+    story.append(Spacer(1, 12))
+    
+    # Add campaign information header
+    if molecule_code and campaign_number:
+        story.append(Paragraph('Project Information', styles['Heading2']))
+        story.append(Paragraph(f'Molecule Code: {molecule_code}', styles['Normal']))
+        story.append(Paragraph(f'Campaign Number: {campaign_number}', styles['Normal']))
+        story.append(Paragraph(f'Product Code: {product_code}', styles['Normal']))
+        story.append(Paragraph(f'Dosage Form: {dosage_form}', styles['Normal']))
+        story.append(Spacer(1, 12))
+    
+    # Add description section
+    story.append(Paragraph('3.2.P.1.1 Description of the Dosage Form', styles['Heading2']))
+    story.append(Paragraph(sections['description'], styles['Normal']))
+    story.append(Spacer(1, 12))
+    
+    # Add composition section
+    story.append(Paragraph('3.2.P.1.2 Composition', styles['Heading2']))
+    story.append(Paragraph(sections['composition_intro'], styles['Normal']))
+    story.append(Spacer(1, 12))
+    
+    # Prepare table data
+    headers = ['Component', 'Quality Reference', 'Function', 'Quantity / Unit (mg per tablet)']
+    table_data = [headers]
+    
+    total_weight = 0
+    for _, row in df.iterrows():
+        table_data.append([
+            str(row['Component']),
+            str(row['Quality_Reference']),
+            str(row['Function']),
+            str(row['Quantity_mg_per_tablet'])
+        ])
+        total_weight += row['Quantity_mg_per_tablet']
+    
+    # Add total weight row
+    table_data.append(['Total Weight', '', '', str(total_weight)])
+    
+    # Create table
+    table = Table(table_data)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    
+    story.append(table)
+    story.append(Spacer(1, 12))
+    
+    # Add footnote
+    story.append(Paragraph("Abbreviations: NF = National Formulary; Ph. Eur. = European Pharmacopoeia; USP = United States Pharmacopoeia.", styles['Normal']))
+    
+    # Add pharmaceutical development
+    if sections.get('pharmaceutical_development'):
+        story.append(Paragraph('3.2.P.1.3 Pharmaceutical Development', styles['Heading2']))
+        story.append(Paragraph(sections['pharmaceutical_development'], styles['Normal']))
+        story.append(Spacer(1, 12))
+    
+    # Add manufacturing process
+    if sections.get('manufacturing_process'):
+        story.append(Paragraph('3.2.P.1.4 Manufacturing Process', styles['Heading2']))
+        story.append(Paragraph(sections['manufacturing_process'], styles['Normal']))
+        story.append(Spacer(1, 12))
+    
+    doc.build(story)
+    return buffer
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -847,6 +1095,123 @@ def list_folders():
         
     except Exception as e:
         logger.error(f"Error in list_folders: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/generate-document', methods=['POST'])
+def generate_document():
+    """Generate regulatory document and upload to Google Drive"""
+    try:
+        logger.info("START: generate_document route")
+        
+        data = request.get_json()
+        
+        if not data:
+            logger.error("No JSON data provided")
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        # Extract required parameters
+        molecule_code = data.get('molecule_code')
+        campaign_number = data.get('campaign_number')
+        product_code = data.get('product_code', 'DRUG-001')
+        dosage_form = data.get('dosage_form', 'Immediate-release film-coated tablet')
+        mechanism_of_action = data.get('mechanism_of_action', 'Standard mechanism of action')
+        drug_class = data.get('drug_class', 'Standard class')
+        indication = data.get('indication', 'Standard indication')
+        
+        # Optional parameters
+        composition_data = data.get('composition_data')
+        additional_instructions = data.get('additional_instructions', '')
+        
+        if not molecule_code or not campaign_number:
+            logger.error("Missing required parameters")
+            return jsonify({"error": "molecule_code and campaign_number are required"}), 400
+        
+        logger.info(f"Processing document generation for molecule: {molecule_code}, campaign: {campaign_number}")
+        
+        # Initialize Google Drive service
+        drive_service = initialize_google_drive_service()
+        if not drive_service:
+            return jsonify({"error": "Failed to initialize Google Drive service"}), 500
+        
+        # Get shared drive ID
+        shared_drive_id = get_shared_drive_id(drive_service)
+        
+        # Find target folder
+        target_folder, folder_path = find_target_folder(drive_service, molecule_code, campaign_number)
+        
+        if not target_folder:
+            return jsonify({"error": f"Target folder not found for Molecule {molecule_code} Campaign {campaign_number}"}), 404
+        
+        # Use provided composition data or create sample data
+        if composition_data:
+            df = pd.DataFrame(composition_data)
+        else:
+            df = create_sample_pharma_data()
+        
+        # Create drug info dictionary
+        drug_info = {
+            'class': drug_class,
+            'indication': indication
+        }
+        
+        # Generate regulatory text
+        logger.info("Generating regulatory text with AI...")
+        sections = generate_regulatory_text_with_ai(
+            product_code, 
+            dosage_form, 
+            df, 
+            mechanism_of_action, 
+            drug_info,
+            additional_instructions
+        )
+        
+        # Generate PDF
+        logger.info("Generating PDF document...")
+        pdf_buffer = export_to_pdf_regulatory(
+            df, 
+            sections, 
+            product_code, 
+            dosage_form,
+            molecule_code,
+            campaign_number
+        )
+        pdf_buffer.seek(0)
+        
+        # Upload to Google Drive
+        logger.info("Uploading PDF to Google Drive...")
+        file_name = f"Section_3.2.P.1_{product_code}_Campaign_{campaign_number}.pdf"
+        uploaded_file = upload_file_to_google_drive(
+            drive_service,
+            pdf_buffer.getvalue(),
+            file_name,
+            "application/pdf",
+            target_folder['id'],
+            shared_drive_id
+        )
+        
+        if uploaded_file:
+            logger.info("Document generated and uploaded successfully")
+            return jsonify({
+                "status": "success",
+                "message": "Document generated and uploaded successfully",
+                "data": {
+                    "file_id": uploaded_file['id'],
+                    "file_name": uploaded_file['name'],
+                    "file_link": uploaded_file.get('webViewLink', f"https://drive.google.com/file/d/{uploaded_file['id']}/view"),
+                    "folder_path": folder_path,
+                    "folder_link": f"https://drive.google.com/drive/folders/{target_folder['id']}",
+                    "molecule_code": molecule_code,
+                    "campaign_number": campaign_number,
+                    "product_code": product_code,
+                    "sections": sections,
+                    "composition_data": df.to_dict('records')
+                }
+            })
+        else:
+            return jsonify({"error": "Failed to upload document to Google Drive"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in generate_document: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
