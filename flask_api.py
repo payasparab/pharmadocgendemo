@@ -27,6 +27,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from werkzeug.utils import secure_filename
 import logging
+import threading
+import time
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# In-memory storage for job results
+job_results = {}
+job_status = {}
 
 # Drug database
 DRUG_DATABASE = {
@@ -425,6 +432,95 @@ def create_campaign_folder_structure(service, campaign_name: str, molecule_code:
         logger.error(f"Error creating campaign folder structure: {e}")
         return None
 
+def background_create_folders(molecule_code: str, campaign_number: str):
+    """Background function to create folder structure"""
+    job_key = f"{molecule_code}_{campaign_number}"
+    
+    try:
+        # Update status to running
+        job_status[job_key] = {
+            "status": "running",
+            "message": "Creating folder structure...",
+            "started_at": datetime.now().isoformat(),
+            "progress": 0
+        }
+        
+        # Initialize Google Drive service
+        drive_service = initialize_google_drive_service()
+        if not drive_service:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to initialize Google Drive service",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Get shared drive ID
+        shared_drive_id = get_shared_drive_id(drive_service)
+        
+        # Update progress
+        job_status[job_key]["progress"] = 10
+        job_status[job_key]["message"] = "Checking existing folders..."
+        
+        # Create folder structure
+        result = create_campaign_folder_structure(
+            drive_service, 
+            campaign_number, 
+            molecule_code,
+            None,  # parent_folder_id
+            shared_drive_id
+        )
+        
+        if result:
+            # Store the result
+            job_results[job_key] = {
+                "project_folder": {
+                    "id": result['project_folder']['id'],
+                    "name": result['project_folder']['name'],
+                    "link": result['project_folder'].get('webViewLink', f"https://drive.google.com/drive/folders/{result['project_folder']['id']}")
+                },
+                "campaign_folder": {
+                    "id": result['campaign_folder']['id'],
+                    "name": result['campaign_folder']['name'],
+                    "link": result['campaign_folder'].get('webViewLink', f"https://drive.google.com/drive/folders/{result['campaign_folder']['id']}")
+                },
+                "reg_doc_folder": {
+                    "id": result['reg_doc_folder']['id'],
+                    "name": result['reg_doc_folder']['name'],
+                    "link": result['reg_doc_folder'].get('webViewLink', f"https://drive.google.com/drive/folders/{result['reg_doc_folder']['id']}")
+                },
+                "molecule_code": molecule_code,
+                "campaign_number": campaign_number
+            }
+            
+            # Update status to completed
+            job_status[job_key] = {
+                "status": "completed",
+                "message": "Folder structure created successfully",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat(),
+                "progress": 100
+            }
+            
+            logger.info(f"Background job completed for {job_key}")
+        else:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to create folder structure",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            
+    except Exception as e:
+        logger.error(f"Background job failed for {job_key}: {e}")
+        job_status[job_key] = {
+            "status": "failed",
+            "message": f"Error: {str(e)}",
+            "started_at": job_status[job_key]["started_at"],
+            "completed_at": datetime.now().isoformat()
+        }
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -435,7 +531,7 @@ def health_check():
 
 @app.route('/generate-folder-structure', methods=['POST'])
 def generate_folder_structure():
-    """Generate campaign folder structure in Google Drive"""
+    """Start background job to generate campaign folder structure"""
     try:
         data = request.get_json()
         
@@ -448,50 +544,40 @@ def generate_folder_structure():
         if not molecule_code or not campaign_number:
             return jsonify({"error": "molecule_code and campaign_number are required"}), 400
         
-        # Initialize Google Drive service
-        drive_service = initialize_google_drive_service()
-        if not drive_service:
-            return jsonify({"error": "Failed to initialize Google Drive service"}), 500
+        job_key = f"{molecule_code}_{campaign_number}"
         
-        # Get shared drive ID
-        shared_drive_id = get_shared_drive_id(drive_service)
-        
-        # Create folder structure
-        result = create_campaign_folder_structure(
-            drive_service, 
-            campaign_number, 
-            molecule_code,
-            None,  # parent_folder_id
-            shared_drive_id
-        )
-        
-        if result:
+        # Check if job is already running
+        if job_key in job_status and job_status[job_key]["status"] == "running":
             return jsonify({
-                "status": "success",
-                "message": "Campaign folder structure created successfully",
-                "data": {
-                    "project_folder": {
-                        "id": result['project_folder']['id'],
-                        "name": result['project_folder']['name'],
-                        "link": result['project_folder'].get('webViewLink', f"https://drive.google.com/drive/folders/{result['project_folder']['id']}")
-                    },
-                    "campaign_folder": {
-                        "id": result['campaign_folder']['id'],
-                        "name": result['campaign_folder']['name'],
-                        "link": result['campaign_folder'].get('webViewLink', f"https://drive.google.com/drive/folders/{result['campaign_folder']['id']}")
-                    },
-                    "reg_doc_folder": {
-                        "id": result['reg_doc_folder']['id'],
-                        "name": result['reg_doc_folder']['name'],
-                        "link": result['reg_doc_folder'].get('webViewLink', f"https://drive.google.com/drive/folders/{result['reg_doc_folder']['id']}")
-                    },
-                    "molecule_code": molecule_code,
-                    "campaign_number": campaign_number
-                }
+                "status": "already_running",
+                "message": "Folder creation job is already running",
+                "job_key": job_key
             })
-        else:
-            return jsonify({"error": "Failed to create campaign folder structure"}), 500
-            
+        
+        # Check if job is already completed
+        if job_key in job_status and job_status[job_key]["status"] == "completed":
+            return jsonify({
+                "status": "already_completed",
+                "message": "Folder structure already exists",
+                "job_key": job_key,
+                "data": job_results.get(job_key)
+            })
+        
+        # Start background thread
+        thread = threading.Thread(
+            target=background_create_folders,
+            args=(molecule_code, campaign_number),
+            daemon=True
+        )
+        thread.start()
+        
+        return jsonify({
+            "status": "started",
+            "message": "Folder creation job started",
+            "job_key": job_key,
+            "poll_url": f"/folder-status?molecule_code={molecule_code}&campaign_number={campaign_number}"
+        })
+        
     except Exception as e:
         logger.error(f"Error in generate_folder_structure: {e}")
         return jsonify({"error": str(e)}), 500
@@ -638,6 +724,52 @@ def deposit_file_with_path():
             
     except Exception as e:
         logger.error(f"Error in deposit_file_with_path: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/folder-status', methods=['GET'])
+def folder_status():
+    """Check the status of a folder creation job"""
+    try:
+        molecule_code = request.args.get('molecule_code')
+        campaign_number = request.args.get('campaign_number')
+        
+        if not molecule_code or not campaign_number:
+            return jsonify({"error": "molecule_code and campaign_number are required"}), 400
+        
+        job_key = f"{molecule_code}_{campaign_number}"
+        
+        if job_key not in job_status:
+            return jsonify({
+                "status": "not_found",
+                "message": "No job found for this molecule and campaign",
+                "job_key": job_key
+            })
+        
+        status_info = job_status[job_key]
+        
+        response = {
+            "status": status_info["status"],
+            "message": status_info["message"],
+            "job_key": job_key,
+            "started_at": status_info["started_at"]
+        }
+        
+        # Add progress if available
+        if "progress" in status_info:
+            response["progress"] = status_info["progress"]
+        
+        # Add completion time if available
+        if "completed_at" in status_info:
+            response["completed_at"] = status_info["completed_at"]
+        
+        # Add result data if completed
+        if status_info["status"] == "completed" and job_key in job_results:
+            response["data"] = job_results[job_key]
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in folder_status: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/list-folders', methods=['GET'])

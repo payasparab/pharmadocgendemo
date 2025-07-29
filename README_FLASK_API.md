@@ -39,9 +39,9 @@ python flask_api.py
 - **GET** `/health`
 - Returns API status
 
-### 2. Generate Folder Structure
+### 2. Generate Folder Structure (Async)
 - **POST** `/generate-folder-structure`
-- Creates campaign folder structure in Google Drive
+- Starts a background job to create campaign folder structure in Google Drive
 
 **Request Body:**
 ```json
@@ -51,11 +51,31 @@ python flask_api.py
 }
 ```
 
-**Response:**
+**Response (Job Started):**
 ```json
 {
-  "status": "success",
-  "message": "Campaign folder structure created successfully",
+  "status": "started",
+  "message": "Folder creation job started",
+  "job_key": "THPG001_3",
+  "poll_url": "/folder-status?molecule_code=THPG001&campaign_number=3"
+}
+```
+
+**Response (Already Running):**
+```json
+{
+  "status": "already_running",
+  "message": "Folder creation job is already running",
+  "job_key": "THPG001_3"
+}
+```
+
+**Response (Already Completed):**
+```json
+{
+  "status": "already_completed",
+  "message": "Folder structure already exists",
+  "job_key": "THPG001_3",
   "data": {
     "project_folder": {
       "id": "folder_id",
@@ -75,6 +95,63 @@ python flask_api.py
     "molecule_code": "THPG001",
     "campaign_number": "3"
   }
+}
+```
+
+### 3. Check Folder Status
+- **GET** `/folder-status?molecule_code=THPG001&campaign_number=3`
+- Check the status of a folder creation job
+
+**Response (Running):**
+```json
+{
+  "status": "running",
+  "message": "Creating folder structure...",
+  "job_key": "THPG001_3",
+  "started_at": "2024-01-01T12:00:00",
+  "progress": 25
+}
+```
+
+**Response (Completed):**
+```json
+{
+  "status": "completed",
+  "message": "Folder structure created successfully",
+  "job_key": "THPG001_3",
+  "started_at": "2024-01-01T12:00:00",
+  "completed_at": "2024-01-01T12:02:30",
+  "progress": 100,
+  "data": {
+    "project_folder": {
+      "id": "folder_id",
+      "name": "Project; Molecule THPG001",
+      "link": "https://drive.google.com/drive/folders/folder_id"
+    },
+    "campaign_folder": {
+      "id": "campaign_id",
+      "name": "Project THPG001 (Campaign #3)",
+      "link": "https://drive.google.com/drive/folders/campaign_id"
+    },
+    "reg_doc_folder": {
+      "id": "reg_doc_id",
+      "name": "Draft AI Reg Document",
+      "link": "https://drive.google.com/drive/folders/reg_doc_id"
+    },
+    "molecule_code": "THPG001",
+    "campaign_number": "3"
+  }
+}
+```
+
+**Response (Failed):**
+```json
+{
+  "status": "failed",
+  "message": "Failed to create folder structure",
+  "job_key": "THPG001_3",
+  "started_at": "2024-01-01T12:00:00",
+  "completed_at": "2024-01-01T12:00:15"
 }
 ```
 
@@ -164,6 +241,41 @@ python flask_api.py
 {
   "molecule_code": moleculeCodeInput.value,
   "campaign_number": campaignNumberInput.value
+}
+```
+
+### Example Retool Query for Check Folder Status:
+```javascript
+// GET request to /folder-status
+// URL: /folder-status?molecule_code={{ moleculeCodeInput.value }}&campaign_number={{ campaignNumberInput.value }}
+```
+
+### Example Retool JavaScript for Async Folder Generation:
+```javascript
+// Step 1: Start the job
+generateFolderStructure.trigger();
+
+// Step 2: Poll for status (in a timer or loop)
+function pollFolderStatus() {
+  folderStatus.trigger();
+  
+  if (folderStatus.data.status === "completed") {
+    // Job completed successfully
+    statusText.setValue("✅ Folders created successfully!");
+    console.log("Folder data:", folderStatus.data.data);
+  } else if (folderStatus.data.status === "failed") {
+    // Job failed
+    statusText.setValue("❌ Job failed: " + folderStatus.data.message);
+  } else if (folderStatus.data.status === "running") {
+    // Job still running, poll again in 5 seconds
+    statusText.setValue("🔄 Creating folders... " + folderStatus.data.progress + "%");
+    setTimeout(pollFolderStatus, 5000);
+  }
+}
+
+// Start polling after job is started
+if (generateFolderStructure.data.status === "started") {
+  setTimeout(pollFolderStatus, 2000); // Start polling after 2 seconds
 }
 ```
 
