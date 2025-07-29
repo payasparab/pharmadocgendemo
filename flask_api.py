@@ -90,6 +90,18 @@ def load_openai_api_key():
     """Load OpenAI API key from environment variable"""
     return os.getenv('OPENAI_API_KEY')
 
+def initialize_openai():
+    """Initialize OpenAI client"""
+    api_key = load_openai_api_key()
+    if api_key and api_key != "your-openai-api-key-here":
+        try:
+            client = OpenAI(api_key=api_key)
+            return client
+        except Exception as e:
+            logger.error(f"Error initializing OpenAI client: {e}")
+            return None
+    return None
+
 def load_google_drive_credentials():
     """Load Google Drive API credentials from environment variables or JSON file"""
     try:
