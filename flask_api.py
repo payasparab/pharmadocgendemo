@@ -541,6 +541,165 @@ def background_create_folders(molecule_code: str, campaign_number: str):
             "completed_at": datetime.now().isoformat()
         }
 
+def background_generate_document(molecule_code: str, campaign_number: str, product_code: str, 
+                                dosage_form: str, mechanism_of_action: str, drug_class: str, 
+                                indication: str, additional_instructions: str, composition_data: list):
+    """Background function to generate document"""
+    job_key = f"doc_{molecule_code}_{campaign_number}"
+    
+    logger.info(f"BACKGROUND: Starting document generation for {job_key}")
+    
+    try:
+        # Update status to running
+        job_status[job_key] = {
+            "status": "running",
+            "message": "Initializing document generation...",
+            "started_at": datetime.now().isoformat(),
+            "progress": 0
+        }
+        
+        logger.info(f"BACKGROUND: Status updated to running for {job_key}")
+        
+        # Initialize Google Drive service
+        logger.info(f"BACKGROUND: Initializing Google Drive service for {job_key}")
+        drive_service = initialize_google_drive_service()
+        if not drive_service:
+            logger.error(f"BACKGROUND: Failed to initialize Google Drive service for {job_key}")
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to initialize Google Drive service",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        logger.info(f"BACKGROUND: Google Drive service initialized for {job_key}")
+        
+        # Get shared drive ID
+        shared_drive_id = get_shared_drive_id(drive_service)
+        
+        # Update progress
+        job_status[job_key]["progress"] = 10
+        job_status[job_key]["message"] = "Finding target folder..."
+        
+        # Find target folder
+        target_folder, folder_path = find_target_folder(drive_service, molecule_code, campaign_number)
+        
+        if not target_folder:
+            logger.error(f"BACKGROUND: Target folder not found for {job_key}")
+            job_status[job_key] = {
+                "status": "failed",
+                "message": f"Target folder not found for Molecule {molecule_code} Campaign {campaign_number}",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Update progress
+        job_status[job_key]["progress"] = 20
+        job_status[job_key]["message"] = "Preparing composition data..."
+        
+        # Use provided composition data or create sample data
+        if composition_data:
+            df = pd.DataFrame(composition_data)
+        else:
+            df = create_sample_pharma_data()
+        
+        # Create drug info dictionary
+        drug_info = {
+            'class': drug_class,
+            'indication': indication
+        }
+        
+        # Update progress
+        job_status[job_key]["progress"] = 30
+        job_status[job_key]["message"] = "Generating regulatory text with AI..."
+        
+        # Generate regulatory text
+        logger.info("BACKGROUND: Generating regulatory text with AI...")
+        sections = generate_regulatory_text_with_ai(
+            product_code, 
+            dosage_form, 
+            df, 
+            mechanism_of_action, 
+            drug_info,
+            additional_instructions
+        )
+        
+        # Update progress
+        job_status[job_key]["progress"] = 60
+        job_status[job_key]["message"] = "Generating PDF document..."
+        
+        # Generate PDF
+        logger.info("BACKGROUND: Generating PDF document...")
+        pdf_buffer = export_to_pdf_regulatory(
+            df, 
+            sections, 
+            product_code, 
+            dosage_form,
+            molecule_code,
+            campaign_number
+        )
+        pdf_buffer.seek(0)
+        
+        # Update progress
+        job_status[job_key]["progress"] = 80
+        job_status[job_key]["message"] = "Uploading to Google Drive..."
+        
+        # Upload to Google Drive
+        logger.info("BACKGROUND: Uploading PDF to Google Drive...")
+        file_name = f"Section_3.2.P.1_{product_code}_Campaign_{campaign_number}.pdf"
+        uploaded_file = upload_file_to_google_drive(
+            drive_service,
+            pdf_buffer.getvalue(),
+            file_name,
+            "application/pdf",
+            target_folder['id'],
+            shared_drive_id
+        )
+        
+        if uploaded_file:
+            # Store the result
+            job_results[job_key] = {
+                "file_id": uploaded_file['id'],
+                "file_name": uploaded_file['name'],
+                "file_link": uploaded_file.get('webViewLink', f"https://drive.google.com/file/d/{uploaded_file['id']}/view"),
+                "folder_path": folder_path,
+                "folder_link": f"https://drive.google.com/drive/folders/{target_folder['id']}",
+                "molecule_code": molecule_code,
+                "campaign_number": campaign_number,
+                "product_code": product_code,
+                "sections": sections,
+                "composition_data": df.to_dict('records')
+            }
+            
+            # Update status to completed
+            job_status[job_key] = {
+                "status": "completed",
+                "message": "Document generated and uploaded successfully",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat(),
+                "progress": 100
+            }
+            
+            logger.info(f"Background document generation completed for {job_key}")
+        else:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to upload document to Google Drive",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            
+    except Exception as e:
+        logger.error(f"Background document generation failed for {job_key}: {e}")
+        job_status[job_key] = {
+            "status": "failed",
+            "message": f"Error: {str(e)}",
+            "started_at": job_status[job_key]["started_at"],
+            "completed_at": datetime.now().isoformat()
+        }
+
 def create_sample_pharma_data():
     """Create sample pharmaceutical composition data"""
     data = {
@@ -1111,7 +1270,7 @@ def list_folders():
 
 @app.route('/generate-document', methods=['POST'])
 def generate_document():
-    """Generate regulatory document and upload to Google Drive"""
+    """Start background job to generate regulatory document"""
     try:
         logger.info("START: generate_document route")
         
@@ -1140,90 +1299,95 @@ def generate_document():
         
         logger.info(f"Processing document generation for molecule: {molecule_code}, campaign: {campaign_number}")
         
-        # Initialize Google Drive service
-        drive_service = initialize_google_drive_service()
-        if not drive_service:
-            return jsonify({"error": "Failed to initialize Google Drive service"}), 500
+        job_key = f"doc_{molecule_code}_{campaign_number}"
         
-        # Get shared drive ID
-        shared_drive_id = get_shared_drive_id(drive_service)
-        
-        # Find target folder
-        target_folder, folder_path = find_target_folder(drive_service, molecule_code, campaign_number)
-        
-        if not target_folder:
-            return jsonify({"error": f"Target folder not found for Molecule {molecule_code} Campaign {campaign_number}"}), 404
-        
-        # Use provided composition data or create sample data
-        if composition_data:
-            df = pd.DataFrame(composition_data)
-        else:
-            df = create_sample_pharma_data()
-        
-        # Create drug info dictionary
-        drug_info = {
-            'class': drug_class,
-            'indication': indication
-        }
-        
-        # Generate regulatory text
-        logger.info("Generating regulatory text with AI...")
-        sections = generate_regulatory_text_with_ai(
-            product_code, 
-            dosage_form, 
-            df, 
-            mechanism_of_action, 
-            drug_info,
-            additional_instructions
-        )
-        
-        # Generate PDF
-        logger.info("Generating PDF document...")
-        pdf_buffer = export_to_pdf_regulatory(
-            df, 
-            sections, 
-            product_code, 
-            dosage_form,
-            molecule_code,
-            campaign_number
-        )
-        pdf_buffer.seek(0)
-        
-        # Upload to Google Drive
-        logger.info("Uploading PDF to Google Drive...")
-        file_name = f"Section_3.2.P.1_{product_code}_Campaign_{campaign_number}.pdf"
-        uploaded_file = upload_file_to_google_drive(
-            drive_service,
-            pdf_buffer.getvalue(),
-            file_name,
-            "application/pdf",
-            target_folder['id'],
-            shared_drive_id
-        )
-        
-        if uploaded_file:
-            logger.info("Document generated and uploaded successfully")
+        # Check if job is already running
+        if job_key in job_status and job_status[job_key]["status"] == "running":
+            logger.info(f"Document generation job already running for {job_key}")
             return jsonify({
-                "status": "success",
-                "message": "Document generated and uploaded successfully",
-                "data": {
-                    "file_id": uploaded_file['id'],
-                    "file_name": uploaded_file['name'],
-                    "file_link": uploaded_file.get('webViewLink', f"https://drive.google.com/file/d/{uploaded_file['id']}/view"),
-                    "folder_path": folder_path,
-                    "folder_link": f"https://drive.google.com/drive/folders/{target_folder['id']}",
-                    "molecule_code": molecule_code,
-                    "campaign_number": campaign_number,
-                    "product_code": product_code,
-                    "sections": sections,
-                    "composition_data": df.to_dict('records')
-                }
+                "status": "already_running",
+                "message": "Document generation job is already running",
+                "job_key": job_key
             })
-        else:
-            return jsonify({"error": "Failed to upload document to Google Drive"}), 500
-            
+        
+        # Check if job is already completed
+        if job_key in job_status and job_status[job_key]["status"] == "completed":
+            logger.info(f"Document generation job already completed for {job_key}")
+            return jsonify({
+                "status": "already_completed",
+                "message": "Document already exists",
+                "job_key": job_key,
+                "data": job_results.get(job_key)
+            })
+        
+        logger.info(f"Starting background thread for {job_key}")
+        
+        # Start background thread
+        thread = threading.Thread(
+            target=background_generate_document,
+            args=(molecule_code, campaign_number, product_code, dosage_form, 
+                  mechanism_of_action, drug_class, indication, additional_instructions, composition_data),
+            daemon=True
+        )
+        thread.start()
+        
+        logger.info(f"RETURNING: Background document generation job started for {job_key}")
+        
+        return jsonify({
+            "status": "started",
+            "message": "Document generation job started",
+            "job_key": job_key,
+            "poll_url": f"/document-status?molecule_code={molecule_code}&campaign_number={campaign_number}"
+        })
+        
     except Exception as e:
         logger.error(f"Error in generate_document: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/document-status', methods=['GET'])
+def document_status():
+    """Check the status of a document generation job"""
+    try:
+        molecule_code = request.args.get('molecule_code')
+        campaign_number = request.args.get('campaign_number')
+        
+        if not molecule_code or not campaign_number:
+            return jsonify({"error": "molecule_code and campaign_number are required"}), 400
+        
+        job_key = f"doc_{molecule_code}_{campaign_number}"
+        
+        if job_key not in job_status:
+            return jsonify({
+                "status": "not_found",
+                "message": "No document generation job found for this molecule and campaign",
+                "job_key": job_key
+            })
+        
+        status_info = job_status[job_key]
+        
+        response = {
+            "status": status_info["status"],
+            "message": status_info["message"],
+            "job_key": job_key,
+            "started_at": status_info["started_at"]
+        }
+        
+        # Add progress if available
+        if "progress" in status_info:
+            response["progress"] = status_info["progress"]
+        
+        # Add completion time if available
+        if "completed_at" in status_info:
+            response["completed_at"] = status_info["completed_at"]
+        
+        # Add result data if completed
+        if status_info["status"] == "completed" and job_key in job_results:
+            response["data"] = job_results[job_key]
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in document_status: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
