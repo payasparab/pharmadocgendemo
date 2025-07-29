@@ -3,11 +3,11 @@ services:
     name: document-generation-api
     env: python
     plan: free
-    buildCommand: pip install -r requirements_flask.txt
+    buildCommand: pip install -r requirements_minimal.txt
     startCommand: gunicorn flask_api:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.16
+        value: 3.11.7
       - key: GOOGLE_DRIVE_TYPE
         sync: false
       - key: GOOGLE_DRIVE_PROJECT_ID
