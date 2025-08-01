@@ -2,14 +2,40 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from egnyte_client import (
-    get_token, 
-    get_folder_details, 
-    list_folder_contents, 
-    create_folder, 
-    test_folder_creation
+# Import functions directly from the consolidated Flask API
+from flask_api import (
+    get_egnyte_token, 
+    get_egnyte_folder_details, 
+    list_egnyte_folder_contents, 
+    create_egnyte_folder
 )
 from credentials import ROOT_FOLDER
+
+def test_simple_folder_creation():
+    """Test simple folder creation with timestamp"""
+    import time
+    from datetime import datetime
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    folder_name = f"TEST_{timestamp}"
+    
+    print("🧪 Testing simple folder creation...")
+    
+    # Get token
+    token = get_egnyte_token()
+    if not token:
+        print("❌ Failed to get token for test")
+        return None
+    
+    # Create test folder in the root folder
+    result = create_egnyte_folder(token, ROOT_FOLDER, folder_name)
+    
+    if result:
+        print(f"✅ Test folder '{folder_name}' created successfully!")
+        return result
+    else:
+        print(f"❌ Failed to create test folder '{folder_name}'")
+        return None
 
 def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3"):
     """Test creating the complete folder structure matching app.py"""
@@ -20,7 +46,7 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
     print("=" * 60)
     
     # Get token
-    token = get_token()
+    token = get_egnyte_token()
     if not token:
         print("❌ Failed to get token for complete structure test")
         return None
@@ -28,7 +54,7 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
     # Step 1: Create project folder
     print(f"\n📁 Step 1: Creating project folder...")
     project_folder_name = f"Project; Molecule {molecule_code}"
-    project_folder = create_folder(token, ROOT_FOLDER, project_folder_name)
+    project_folder = create_egnyte_folder(token, ROOT_FOLDER, project_folder_name)
     if not project_folder:
         print("❌ Failed to create project folder")
         return None
@@ -41,7 +67,7 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
     # Step 2: Create campaign folder
     print(f"\n📁 Step 2: Creating campaign folder...")
     campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_number})"
-    campaign_folder = create_folder(token, project_folder_id, campaign_folder_name)
+    campaign_folder = create_egnyte_folder(token, project_folder_id, campaign_folder_name)
     if not campaign_folder:
         print("❌ Failed to create campaign folder")
         return None
@@ -53,8 +79,8 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
     
     # Step 3: Create Pre and Post folders
     print(f"\n📁 Step 3: Creating Pre and Post folders...")
-    pre_folder = create_folder(token, campaign_folder_id, "Pre")
-    post_folder = create_folder(token, campaign_folder_id, "Post")
+    pre_folder = create_egnyte_folder(token, campaign_folder_id, "Pre")
+    post_folder = create_egnyte_folder(token, campaign_folder_id, "Post")
     
     if not pre_folder or not post_folder:
         print("❌ Failed to create Pre/Post folders")
@@ -73,14 +99,14 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
         phase_folder_id = phase_folder.get('folder_id')
         
         for dept in departments:
-            dept_folder = create_folder(token, phase_folder_id, dept)
+            dept_folder = create_egnyte_folder(token, phase_folder_id, dept)
             if dept_folder:
                 dept_folder_id = dept_folder.get('folder_id')
                 print(f"     ✅ Created {dept} folder")
                 
                 # Create status folders under each department
                 for status in statuses:
-                    status_folder = create_folder(token, dept_folder_id, status)
+                    status_folder = create_egnyte_folder(token, dept_folder_id, status)
                     if status_folder:
                         print(f"       ✅ Created {status} folder")
                     else:
@@ -90,7 +116,7 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
     
     # Step 5: Create Draft AI Reg Document folder
     print(f"\n📁 Step 5: Creating Draft AI Reg Document folder...")
-    reg_doc_folder = create_folder(token, project_folder_id, "Draft AI Reg Document")
+    reg_doc_folder = create_egnyte_folder(token, project_folder_id, "Draft AI Reg Document")
     if not reg_doc_folder:
         print("❌ Failed to create Draft AI Reg Document folder")
         return None
@@ -105,14 +131,14 @@ def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3")
     reg_types = ["IND", "IMPD", "Canada"]
     
     for reg_type in reg_types:
-        reg_type_folder = create_folder(token, reg_doc_folder_id, reg_type)
+        reg_type_folder = create_egnyte_folder(token, reg_doc_folder_id, reg_type)
         if reg_type_folder:
             reg_type_folder_id = reg_type_folder.get('folder_id')
             print(f"     ✅ Created {reg_type} folder")
             
             # Create status folders under each regulatory type
             for status in statuses:
-                status_folder = create_folder(token, reg_type_folder_id, status)
+                status_folder = create_egnyte_folder(token, reg_type_folder_id, status)
                 if status_folder:
                     print(f"       ✅ Created {status} folder")
                 else:
@@ -159,12 +185,12 @@ def main():
     print("=" * 50)
     
     # Get token
-    token = get_token()
+    token = get_egnyte_token()
     if not token:
         return
     
     # Get folder details
-    folder_details = get_folder_details(token, ROOT_FOLDER)
+    folder_details = get_egnyte_folder_details(token, ROOT_FOLDER)
     
     if not folder_details:
         print("❌ Could not get folder details")
@@ -178,7 +204,7 @@ def main():
     print(f"   Path: {folder_path}")
     
     # List folder contents (rate limiting is now automatic)
-    contents = list_folder_contents(token, ROOT_FOLDER)
+    contents = list_egnyte_folder_contents(token, ROOT_FOLDER)
     
     if contents:
         # Count folders and files
@@ -195,7 +221,7 @@ def main():
     print("🧪 Testing Simple Folder Creation")
     print("=" * 50)
     
-    test_result = test_folder_creation()
+    test_result = test_simple_folder_creation()
     
     if test_result:
         print("\n✅ Folder creation test completed successfully!")
