@@ -155,7 +155,22 @@ def create_egnyte_folder(access_token, parent_folder_id, folder_name):
         response.raise_for_status()
         return response.json()
     except requests.HTTPError as e:
-        if "Developer Over Qps" in e.response.text:
+        error_text = e.response.text.lower()
+        
+        # Check for folder already exists error
+        if "already exists" in error_text or "duplicate" in error_text or "exists" in error_text:
+            logger.info(f"Folder '{folder_name}' already exists, checking for existing folder...")
+            # Try to find the existing folder
+            existing_folder = find_existing_folder(access_token, parent_folder_id, folder_name)
+            if existing_folder:
+                logger.info(f"Found existing folder: {existing_folder.get('name')}")
+                return existing_folder
+            else:
+                logger.error(f"Folder '{folder_name}' already exists but couldn't find it")
+                return None
+        
+        # Check for rate limiting
+        elif "developer over qps" in error_text or "rate limit" in error_text or "qps" in error_text:
             logger.warning(f"Rate limit hit, waiting 3 seconds before retry...")
             time.sleep(3)  # Longer wait for rate limit recovery
             try:
@@ -166,11 +181,31 @@ def create_egnyte_folder(access_token, parent_folder_id, folder_name):
             except requests.HTTPError as retry_e:
                 logger.error(f"Failed to create folder on retry: {retry_e}")
                 return None
+        
+        # Check for permission errors
+        elif e.response.status_code == 403:
+            logger.error(f"Permission denied creating folder '{folder_name}': {e.response.text}")
+            return None
+        
         else:
-            logger.error(f"Failed to create folder: {e}")
+            logger.error(f"Failed to create folder '{folder_name}': {e.response.text}")
             return None
     except Exception as e:
-        logger.error(f"Error creating Egnyte folder: {e}")
+        logger.error(f"Error creating Egnyte folder '{folder_name}': {e}")
+        return None
+
+def find_existing_folder(access_token, parent_folder_id, folder_name):
+    """Find an existing folder by name in the parent folder"""
+    try:
+        folder_data = list_egnyte_folder_contents(access_token, parent_folder_id)
+        if folder_data and isinstance(folder_data, dict):
+            folders = folder_data.get("folders", [])
+            for folder in folders:
+                if folder.get('name') == folder_name:
+                    return folder
+        return None
+    except Exception as e:
+        logger.error(f"Error finding existing folder: {e}")
         return None
 
 def get_egnyte_folder_details(access_token, folder_id):

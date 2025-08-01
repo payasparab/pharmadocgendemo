@@ -1,5 +1,8 @@
 import sys
 import os
+import random
+import string
+from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import functions directly from the consolidated Flask API
@@ -11,13 +14,26 @@ from flask_api import (
 )
 from credentials import ROOT_FOLDER
 
+def generate_random_molecule_code():
+    """Generate a random molecule code for testing"""
+    # Generate format: THG + 3 random digits
+    digits = ''.join(random.choices(string.digits, k=3))
+    return f"THG{digits}"
+
+def generate_random_campaign_number():
+    """Generate a random campaign number for testing"""
+    # Generate a random number between 1 and 999
+    return str(random.randint(1, 999))
+
 def test_simple_folder_creation():
     """Test simple folder creation with timestamp"""
     import time
     from datetime import datetime
     
+    # Generate a more unique folder name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"TEST_{timestamp}"
+    random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    folder_name = f"TEST_{timestamp}_{random_suffix}"
     
     print("🧪 Testing simple folder creation...")
     
@@ -37,8 +53,14 @@ def test_simple_folder_creation():
         print(f"❌ Failed to create test folder '{folder_name}'")
         return None
 
-def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3"):
+def test_complete_folder_structure(molecule_code=None, campaign_number=None):
     """Test creating the complete folder structure matching app.py"""
+    # Generate random codes if not provided
+    if molecule_code is None:
+        molecule_code = generate_random_molecule_code()
+    if campaign_number is None:
+        campaign_number = generate_random_campaign_number()
+        
     print(f"\n" + "=" * 60)
     print(f"🧪 Testing Complete Folder Structure")
     print(f"   Molecule: {molecule_code}")
@@ -207,14 +229,36 @@ def main():
     contents = list_egnyte_folder_contents(token, ROOT_FOLDER)
     
     if contents:
-        # Count folders and files
-        folders = [item for item in contents if item.get("is_folder", False)]
-        files = [item for item in contents if not item.get("is_folder", False)]
+        # Handle the response structure properly
+        if isinstance(contents, dict):
+            # If it's a dictionary with folders and files arrays
+            folders = contents.get("folders", [])
+            files = contents.get("files", [])
+            total_items = len(folders) + len(files)
+        elif isinstance(contents, list):
+            # If it's a list of items
+            folders = [item for item in contents if item.get("is_folder", False)]
+            files = [item for item in contents if not item.get("is_folder", False)]
+            total_items = len(contents)
+        else:
+            print(f"❌ Unexpected response format: {type(contents)}")
+            print(f"   Response: {contents}")
+            folders = []
+            files = []
+            total_items = 0
         
         print(f"\n📊 Summary:")
-        print(f"   Total items: {len(contents)}")
+        print(f"   Total items: {total_items}")
         print(f"   Folders: {len(folders)}")
         print(f"   Files: {len(files)}")
+        
+        # Show folder names if any
+        if folders:
+            print(f"\n📁 Folders found:")
+            for folder in folders[:5]:  # Show first 5 folders
+                print(f"   • {folder.get('name', 'Unknown')}")
+            if len(folders) > 5:
+                print(f"   ... and {len(folders) - 5} more")
     
     # Test simple folder creation
     print("\n" + "=" * 50)
@@ -241,7 +285,7 @@ def main():
     print("🧪 Testing Complete Folder Structure")
     print("=" * 50)
     
-    complete_result = test_complete_folder_structure("THPG001", "3")
+    complete_result = test_complete_folder_structure()  # Will use random codes
     
     if complete_result:
         print("\n✅ Complete folder structure test completed successfully!")
