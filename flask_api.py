@@ -31,7 +31,20 @@ import threading
 import time
 from datetime import datetime
 import requests
-from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER
+
+# Try to import credentials, fall back to environment variables if not available
+try:
+    from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER
+    EGNYTE_AVAILABLE = True
+except ImportError:
+    # Use environment variables for deployment
+    DOMAIN = os.getenv('EGNYTE_DOMAIN')
+    CLIENT_ID = os.getenv('EGNYTE_CLIENT_ID')
+    CLIENT_SECRET = os.getenv('EGNYTE_CLIENT_SECRET')
+    USERNAME = os.getenv('EGNYTE_USERNAME')
+    PASSWORD = os.getenv('EGNYTE_PASSWORD')
+    ROOT_FOLDER = os.getenv('EGNYTE_ROOT_FOLDER')
+    EGNYTE_AVAILABLE = all([DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER])
 
 # Rate limiting configuration for Egnyte
 # Egnyte limits: 2 calls per second, 1,000 calls per day
@@ -99,6 +112,10 @@ DRUG_DATABASE = {
 # Egnyte API Functions
 def get_egnyte_token():
     """Get Egnyte access token"""
+    if not EGNYTE_AVAILABLE:
+        logger.error("Egnyte credentials not available")
+        return None
+        
     url = f"https://{DOMAIN}/puboauth/token"
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     data = {
@@ -1296,9 +1313,20 @@ def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str],
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    # Check Google Drive availability
+    drive_service = initialize_google_drive_service()
+    google_drive_status = "available" if drive_service else "unavailable"
+    
+    # Check Egnyte availability
+    egnyte_status = "available" if EGNYTE_AVAILABLE else "unavailable"
+    
     return jsonify({
         "status": "healthy",
-        "message": "Document Generation API is running"
+        "message": "Document Generation API is running",
+        "services": {
+            "google_drive": google_drive_status,
+            "egnyte": egnyte_status
+        }
     })
 
 @app.route('/test-thread', methods=['GET'])
@@ -1739,6 +1767,9 @@ def document_status():
 @app.route('/egnyte-generate-folder-structure', methods=['POST'])
 def egnyte_generate_folder_structure():
     """Start background job to generate Egnyte folder structure"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
     try:
         data = request.get_json()
         
@@ -1836,6 +1867,9 @@ def egnyte_folder_status():
 @app.route('/egnyte-list-folder', methods=['GET'])
 def egnyte_list_folder():
     """List contents of an Egnyte folder"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
     try:
         folder_id = request.args.get('folder_id', ROOT_FOLDER)
         
@@ -1862,6 +1896,9 @@ def egnyte_list_folder():
 @app.route('/egnyte-create-folder', methods=['POST'])
 def egnyte_create_folder():
     """Create a new folder in Egnyte"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
     try:
         data = request.get_json()
         
