@@ -1,5 +1,7 @@
 import requests
 import json
+import time
+from datetime import datetime
 from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER
 
 def get_token():
@@ -115,38 +117,61 @@ def list_folder_contents(access_token, folder_id):
         print(f"Response: {e.response.text}")
         return []
 
-def main():
-    print("🚀 Egnyte Client")
-    print("=" * 50)
-    print(f"Target Folder ID: {ROOT_FOLDER}")
-    print("=" * 50)
+def create_folder(access_token, parent_folder_id, folder_name):
+    """Create a new folder in Egnyte"""
+    print(f"\n📁 Creating folder: {folder_name}")
+    
+    url = f"https://{DOMAIN}/pubapi/v1/fs/ids/folder/{parent_folder_id}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Folder creation data
+    data = {
+        "action": "add_folder",
+        "name": folder_name
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        
+        result = response.json()
+        print(f"✅ Folder created successfully!")
+        print(f"   Name: {result.get('name', folder_name)}")
+        print(f"   ID: {result.get('folder_id', 'Unknown')}")
+        print(f"   Path: {result.get('path', 'Unknown')}")
+        
+        return result
+        
+    except requests.HTTPError as e:
+        print(f"❌ Failed to create folder: {e}")
+        print(f"Response: {e.response.text}")
+        return None
+
+def test_folder_creation():
+    """Test folder creation with timestamp"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    folder_name = f"TEST_{timestamp}"
+    
+    print("🧪 Testing folder creation...")
     
     # Get token
     token = get_token()
     if not token:
-        return
+        print("❌ Failed to get token for test")
+        return None
     
-    # Get folder details
-    folder_details = get_folder_details(token, ROOT_FOLDER)
+    # Create test folder in the root folder
+    result = create_folder(token, ROOT_FOLDER, folder_name)
     
-    if not folder_details:
-        print("❌ Could not get folder details")
-        return
-    
-    # List folder contents
-    contents = list_folder_contents(token, ROOT_FOLDER)
-    
-    if contents:
-        # Count folders and files
-        folders = [item for item in contents if item.get("is_folder", False)]
-        files = [item for item in contents if not item.get("is_folder", False)]
-        
-        print(f"\n📊 Summary:")
-        print(f"   Total items: {len(contents)}")
-        print(f"   Folders: {len(folders)}")
-        print(f"   Files: {len(files)}")
-    
-    print("\n🎉 Test completed!")
+    if result:
+        print(f"✅ Test folder '{folder_name}' created successfully!")
+        return result
+    else:
+        print(f"❌ Failed to create test folder '{folder_name}'")
+        return None
 
-if __name__ == "__main__":
-    main() 
+# This module provides Egnyte API functionality
+# For testing, use: python local_tests/test_egnyte.py 
