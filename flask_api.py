@@ -49,11 +49,26 @@ except ImportError:
 
 # Rate limiting configuration for Egnyte
 # Egnyte limits: 2 calls per second, 1,000 calls per day
-RATE_LIMIT_DELAY = 0.6  # Wait 0.6 seconds between calls (allows ~1.67 calls/sec, safely under 2/sec)
+RATE_LIMIT_DELAY = 1.0  # Wait 1.0 seconds between calls (allows 1 call/sec, safely under 2/sec)
+
+# Token caching to reduce authentication requests
+_egnyte_token_cache = {
+    'token': None,
+    'expires_at': None
+}
 
 def rate_limit_delay():
     """Add delay to respect rate limits"""
     time.sleep(RATE_LIMIT_DELAY)
+
+def clear_egnyte_token_cache():
+    """Clear the cached Egnyte token"""
+    global _egnyte_token_cache
+    _egnyte_token_cache = {
+        'token': None,
+        'expires_at': None
+    }
+    logger.info("🗑️ Cleared Egnyte token cache")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -112,10 +127,18 @@ DRUG_DATABASE = {
 
 # Egnyte API Functions
 def get_egnyte_token():
-    """Get Egnyte access token"""
+    """Get Egnyte access token with rate limiting and retry logic"""
     if not EGNYTE_AVAILABLE:
         logger.error("Egnyte credentials not available")
         return None
+    
+    # Check if we have a cached token that's still valid
+    current_time = time.time()
+    if (_egnyte_token_cache['token'] and 
+        _egnyte_token_cache['expires_at'] and 
+        current_time < _egnyte_token_cache['expires_at']):
+        logger.info("✅ Using cached Egnyte token")
+        return _egnyte_token_cache['token']
     
     logger.info(f"🔐 Attempting Egnyte authentication...")
     logger.info(f"   Domain: {DOMAIN}")
@@ -137,74 +160,106 @@ def get_egnyte_token():
     logger.info(f"🌐 Making request to: {url}")
     logger.info(f"📋 Request data: grant_type=password, username={USERNAME}, client_id={CLIENT_ID}, client_secret={'*' * len(CLIENT_SECRET) if CLIENT_SECRET else 'None'}")
     
-    try:
-        # Use urllib.parse.urlencode to properly encode form data
-        encoded_data = urllib.parse.urlencode(data)
-        logger.info(f"🔧 Encoded data: {encoded_data.replace(PASSWORD, '*' * len(PASSWORD)).replace(CLIENT_SECRET, '*' * len(CLIENT_SECRET))}")
-        
-        response = requests.post(url, data=encoded_data, headers=headers)
-        
-        logger.info(f"📊 Response Status: {response.status_code}")
-        logger.info(f"📋 Response Headers: {dict(response.headers)}")
-        logger.info(f"📄 Response Body: {response.text}")
-        
-        if response.status_code == 200:
-            token_data = response.json()
-            access_token = token_data["access_token"]
-            expires_in = token_data.get("expires_in", "unknown")
-            token_type = token_data.get("token_type", "unknown")
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Add rate limiting delay before each attempt
+            rate_limit_delay()
             
-            logger.info(f"✅ Authentication successful!")
-            logger.info(f"   Token Type: {token_type}")
-            logger.info(f"   Expires In: {expires_in}")
-            logger.info(f"   Access Token: {access_token[:20]}...")
+            # Use urllib.parse.urlencode to properly encode form data
+            encoded_data = urllib.parse.urlencode(data)
+            logger.info(f"🔧 Encoded data: {encoded_data.replace(PASSWORD, '*' * len(PASSWORD)).replace(CLIENT_SECRET, '*' * len(CLIENT_SECRET))}")
             
-            return access_token
-        else:
-            logger.error(f"❌ Authentication failed!")
-            logger.error(f"   Status Code: {response.status_code}")
-            logger.error(f"   Response Text: {response.text}")
+            response = requests.post(url, data=encoded_data, headers=headers)
             
-            # Check for specific error types
-            error_text = response.text.lower()
-            if "invalid username" in error_text or "invalid password" in error_text:
-                logger.error(f"   Error Type: Invalid credentials")
-            elif "rate limit" in error_text or "qps" in error_text:
-                logger.error(f"   Error Type: Rate limiting")
-            elif "ip" in error_text or "restricted" in error_text:
-                logger.error(f"   Error Type: IP restriction")
-            elif "locked" in error_text or "suspended" in error_text:
-                logger.error(f"   Error Type: Account locked/suspended")
+            logger.info(f"📊 Response Status: {response.status_code}")
+            logger.info(f"📋 Response Headers: {dict(response.headers)}")
+            logger.info(f"📄 Response Body: {response.text}")
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                access_token = token_data["access_token"]
+                expires_in = token_data.get("expires_in", 3600)  # Default to 1 hour
+                token_type = token_data.get("token_type", "unknown")
+                
+                # Cache the token with expiration
+                _egnyte_token_cache['token'] = access_token
+                _egnyte_token_cache['expires_at'] = current_time + expires_in - 300  # Expire 5 minutes early
+                
+                logger.info(f"✅ Authentication successful!")
+                logger.info(f"   Token Type: {token_type}")
+                logger.info(f"   Expires In: {expires_in} seconds")
+                logger.info(f"   Access Token: {access_token[:20]}...")
+                logger.info(f"   Token cached until: {datetime.fromtimestamp(_egnyte_token_cache['expires_at'])}")
+                
+                return access_token
+            elif response.status_code == 429:
+                # Handle rate limiting
+                retry_after = response.headers.get('Retry-After', '30')
+                try:
+                    retry_seconds = int(retry_after.split(',')[0])  # Handle "2665, 30" format
+                except (ValueError, IndexError):
+                    retry_seconds = 30
+                
+                logger.warning(f"⚠️ Rate limit hit! Waiting {retry_seconds} seconds before retry {retry_count + 1}/{max_retries}")
+                logger.warning(f"   Retry-After header: {retry_after}")
+                
+                # Wait for the specified time
+                time.sleep(retry_seconds)
+                retry_count += 1
+                continue
             else:
-                logger.error(f"   Error Type: Unknown")
-            
-            # Check for specific headers that might indicate the issue
-            if 'X-Mashery-Error-Code' in response.headers:
-                error_code = response.headers['X-Mashery-Error-Code']
-                logger.error(f"   Mashery Error Code: {error_code}")
-            
-            if 'Retry-After' in response.headers:
-                retry_after = response.headers['Retry-After']
-                logger.error(f"   Retry After: {retry_after} seconds")
-            
+                logger.error(f"❌ Authentication failed!")
+                logger.error(f"   Status Code: {response.status_code}")
+                logger.error(f"   Response Text: {response.text}")
+                
+                # Check for specific error types
+                error_text = response.text.lower()
+                if "invalid username" in error_text or "invalid password" in error_text:
+                    logger.error(f"   Error Type: Invalid credentials")
+                elif "rate limit" in error_text or "qps" in error_text:
+                    logger.error(f"   Error Type: Rate limiting")
+                elif "ip" in error_text or "restricted" in error_text:
+                    logger.error(f"   Error Type: IP restriction")
+                elif "locked" in error_text or "suspended" in error_text:
+                    logger.error(f"   Error Type: Account locked/suspended")
+                else:
+                    logger.error(f"   Error Type: Unknown")
+                
+                # Check for specific headers that might indicate the issue
+                if 'X-Mashery-Error-Code' in response.headers:
+                    error_code = response.headers['X-Mashery-Error-Code']
+                    logger.error(f"   Mashery Error Code: {error_code}")
+                
+                if 'Retry-After' in response.headers:
+                    retry_after = response.headers['Retry-After']
+                    logger.error(f"   Retry After: {retry_after} seconds")
+                
+                # For non-429 errors, don't retry
+                return None
+                
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"❌ Connection error: {e}")
+            logger.error(f"   This might indicate network issues or domain problems")
             return None
-            
-    except requests.exceptions.ConnectionError as e:
-        logger.error(f"❌ Connection error: {e}")
-        logger.error(f"   This might indicate network issues or domain problems")
-        return None
-    except requests.exceptions.Timeout as e:
-        logger.error(f"❌ Timeout error: {e}")
-        logger.error(f"   Request timed out - server might be slow or unreachable")
-        return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Request error: {e}")
-        logger.error(f"   General request failure")
-        return None
-    except Exception as e:
-        logger.error(f"❌ Unexpected error getting Egnyte token: {e}")
-        logger.error(f"   Error type: {type(e).__name__}")
-        return None
+        except requests.exceptions.Timeout as e:
+            logger.error(f"❌ Timeout error: {e}")
+            logger.error(f"   Request timed out - server might be slow or unreachable")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Request error: {e}")
+            logger.error(f"   General request failure")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Unexpected error getting Egnyte token: {e}")
+            logger.error(f"   Error type: {type(e).__name__}")
+            return None
+    
+    # If we've exhausted all retries
+    logger.error(f"❌ Authentication failed after {max_retries} retries due to rate limiting")
+    return None
 
 def create_egnyte_folder(access_token, parent_folder_id, folder_name):
     """Create a new folder in Egnyte"""
@@ -2551,6 +2606,18 @@ def extract_text_from_docx(docx_content):
     except Exception as e:
         logger.error(f"Error extracting text from DOCX: {e}")
         return ""
+
+@app.route('/egnyte-clear-cache', methods=['POST'])
+def egnyte_clear_cache():
+    """Clear the Egnyte token cache"""
+    try:
+        clear_egnyte_token_cache()
+        return jsonify({
+            "status": "success",
+            "message": "Egnyte token cache cleared"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     # For local development
