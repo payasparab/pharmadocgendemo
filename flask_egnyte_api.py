@@ -163,19 +163,33 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         pre_folder = create_egnyte_folder(access_token, campaign_folder_id, "Pre")
         post_folder = create_egnyte_folder(access_token, campaign_folder_id, "Post")
         
+        if not pre_folder or not post_folder:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to create Pre/Post folders",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
         # Create department folders under Pre and Post
         departments = ["mfg", "Anal", "Stability", "CTM"]
         statuses = ["Draft", "Review", "Approved"]
         
-        for phase_folder_id in [pre_folder.get('folder_id') if pre_folder else None, 
-                               post_folder.get('folder_id') if post_folder else None]:
-            if phase_folder_id:
-                for dept in departments:
-                    dept_folder = create_egnyte_folder(access_token, phase_folder_id, dept)
-                    if dept_folder:
-                        dept_folder_id = dept_folder.get('folder_id')
-                        for status in statuses:
-                            create_egnyte_folder(access_token, dept_folder_id, status)
+        job_status[job_key]["progress"] = 65
+        job_status[job_key]["message"] = "Creating department folders..."
+        
+        for phase_name, phase_folder in [("Pre", pre_folder), ("Post", post_folder)]:
+            phase_folder_id = phase_folder.get('folder_id')
+            
+            for dept in departments:
+                dept_folder = create_egnyte_folder(access_token, phase_folder_id, dept)
+                if dept_folder:
+                    dept_folder_id = dept_folder.get('folder_id')
+                    
+                    # Create status folders under each department
+                    for status in statuses:
+                        create_egnyte_folder(access_token, dept_folder_id, status)
         
         # Update progress
         job_status[job_key]["progress"] = 80
@@ -204,8 +218,11 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
             reg_type_folder = create_egnyte_folder(access_token, reg_doc_folder_id, reg_type)
             if reg_type_folder:
                 reg_type_folder_id = reg_type_folder.get('folder_id')
+                
                 for status in statuses:
                     create_egnyte_folder(access_token, reg_type_folder_id, status)
+        
+
         
         # Store the result with URLs
         job_results[job_key] = {

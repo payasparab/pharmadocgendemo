@@ -11,6 +11,147 @@ from egnyte_client import (
 )
 from credentials import ROOT_FOLDER
 
+def test_complete_folder_structure(molecule_code="THPG001", campaign_number="3"):
+    """Test creating the complete folder structure matching app.py"""
+    print(f"\n" + "=" * 60)
+    print(f"🧪 Testing Complete Folder Structure")
+    print(f"   Molecule: {molecule_code}")
+    print(f"   Campaign: {campaign_number}")
+    print("=" * 60)
+    
+    # Get token
+    token = get_token()
+    if not token:
+        print("❌ Failed to get token for complete structure test")
+        return None
+    
+    # Step 1: Create project folder
+    print(f"\n📁 Step 1: Creating project folder...")
+    project_folder_name = f"Project; Molecule {molecule_code}"
+    project_folder = create_folder(token, ROOT_FOLDER, project_folder_name)
+    if not project_folder:
+        print("❌ Failed to create project folder")
+        return None
+    
+    project_folder_id = project_folder.get('folder_id')
+    project_url = f"https://app4americanaitechdev.egnyte.com/app/index.do#storage/files/1{project_folder.get('path', '')}"
+    print(f"✅ Project folder created: {project_folder_name}")
+    print(f"   URL: {project_url}")
+    
+    # Step 2: Create campaign folder
+    print(f"\n📁 Step 2: Creating campaign folder...")
+    campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_number})"
+    campaign_folder = create_folder(token, project_folder_id, campaign_folder_name)
+    if not campaign_folder:
+        print("❌ Failed to create campaign folder")
+        return None
+    
+    campaign_folder_id = campaign_folder.get('folder_id')
+    campaign_url = f"https://app4americanaitechdev.egnyte.com/app/index.do#storage/files/1{campaign_folder.get('path', '')}"
+    print(f"✅ Campaign folder created: {campaign_folder_name}")
+    print(f"   URL: {campaign_url}")
+    
+    # Step 3: Create Pre and Post folders
+    print(f"\n📁 Step 3: Creating Pre and Post folders...")
+    pre_folder = create_folder(token, campaign_folder_id, "Pre")
+    post_folder = create_folder(token, campaign_folder_id, "Post")
+    
+    if not pre_folder or not post_folder:
+        print("❌ Failed to create Pre/Post folders")
+        return None
+    
+    print(f"✅ Pre folder created")
+    print(f"✅ Post folder created")
+    
+    # Step 4: Create department folders under Pre and Post
+    print(f"\n📁 Step 4: Creating department folders...")
+    departments = ["mfg", "Anal", "Stability", "CTM"]
+    statuses = ["Draft", "Review", "Approved"]
+    
+    for phase_name, phase_folder in [("Pre", pre_folder), ("Post", post_folder)]:
+        print(f"\n   Creating {phase_name} department structure...")
+        phase_folder_id = phase_folder.get('folder_id')
+        
+        for dept in departments:
+            dept_folder = create_folder(token, phase_folder_id, dept)
+            if dept_folder:
+                dept_folder_id = dept_folder.get('folder_id')
+                print(f"     ✅ Created {dept} folder")
+                
+                # Create status folders under each department
+                for status in statuses:
+                    status_folder = create_folder(token, dept_folder_id, status)
+                    if status_folder:
+                        print(f"       ✅ Created {status} folder")
+                    else:
+                        print(f"       ❌ Failed to create {status} folder")
+            else:
+                print(f"     ❌ Failed to create {dept} folder")
+    
+    # Step 5: Create Draft AI Reg Document folder
+    print(f"\n📁 Step 5: Creating Draft AI Reg Document folder...")
+    reg_doc_folder = create_folder(token, project_folder_id, "Draft AI Reg Document")
+    if not reg_doc_folder:
+        print("❌ Failed to create Draft AI Reg Document folder")
+        return None
+    
+    reg_doc_folder_id = reg_doc_folder.get('folder_id')
+    reg_doc_url = f"https://app4americanaitechdev.egnyte.com/app/index.do#storage/files/1{reg_doc_folder.get('path', '')}"
+    print(f"✅ Draft AI Reg Document folder created")
+    print(f"   URL: {reg_doc_url}")
+    
+    # Step 6: Create regulatory document folders
+    print(f"\n📁 Step 6: Creating regulatory document folders...")
+    reg_types = ["IND", "IMPD", "Canada"]
+    
+    for reg_type in reg_types:
+        reg_type_folder = create_folder(token, reg_doc_folder_id, reg_type)
+        if reg_type_folder:
+            reg_type_folder_id = reg_type_folder.get('folder_id')
+            print(f"     ✅ Created {reg_type} folder")
+            
+            # Create status folders under each regulatory type
+            for status in statuses:
+                status_folder = create_folder(token, reg_type_folder_id, status)
+                if status_folder:
+                    print(f"       ✅ Created {status} folder")
+                else:
+                    print(f"       ❌ Failed to create {status} folder")
+        else:
+            print(f"     ❌ Failed to create {reg_type} folder")
+    
+    # Summary
+    print(f"\n" + "=" * 60)
+    print(f"🎉 Complete Folder Structure Created Successfully!")
+    print("=" * 60)
+    print(f"📁 Project: {project_folder_name}")
+    print(f"   URL: {project_url}")
+    print(f"📁 Campaign: {campaign_folder_name}")
+    print(f"   URL: {campaign_url}")
+    print(f"📁 Draft AI Reg Document")
+    print(f"   URL: {reg_doc_url}")
+    print(f"\n📊 Structure Summary:")
+    print(f"   • 1 Project folder")
+    print(f"   • 1 Campaign folder")
+    print(f"   • 2 Phase folders (Pre, Post)")
+    print(f"   • 8 Department folders (4 per phase)")
+    print(f"   • 24 Status folders (3 per department)")
+    print(f"   • 1 Draft AI Reg Document folder")
+    print(f"   • 3 Regulatory type folders (IND, IMPD, Canada)")
+    print(f"   • 9 Regulatory status folders (3 per type)")
+    print(f"   • Total: 49 folders created")
+    
+    return {
+        "project_folder": project_folder,
+        "campaign_folder": campaign_folder,
+        "reg_doc_folder": reg_doc_folder,
+        "urls": {
+            "project": project_url,
+            "campaign": campaign_url,
+            "reg_doc": reg_doc_url
+        }
+    }
+
 def main():
     print("🚀 Egnyte Client Test")
     print("=" * 50)
@@ -49,9 +190,9 @@ def main():
         print(f"   Folders: {len(folders)}")
         print(f"   Files: {len(files)}")
     
-    # Test folder creation
+    # Test simple folder creation
     print("\n" + "=" * 50)
-    print("🧪 Testing Folder Creation")
+    print("🧪 Testing Simple Folder Creation")
     print("=" * 50)
     
     test_result = test_folder_creation()
@@ -68,6 +209,18 @@ def main():
         print(f"   Folder ID: {test_result.get('folder_id', 'Unknown')}")
     else:
         print("\n❌ Folder creation test failed!")
+    
+    # Test complete folder structure
+    print("\n" + "=" * 50)
+    print("🧪 Testing Complete Folder Structure")
+    print("=" * 50)
+    
+    complete_result = test_complete_folder_structure("THPG001", "3")
+    
+    if complete_result:
+        print("\n✅ Complete folder structure test completed successfully!")
+    else:
+        print("\n❌ Complete folder structure test failed!")
     
     print("\n🎉 All tests completed!")
 
