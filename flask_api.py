@@ -31,6 +31,7 @@ import threading
 import time
 from datetime import datetime
 import requests
+import urllib.parse
 
 # Try to import credentials, fall back to environment variables if not available
 try:
@@ -120,6 +121,7 @@ def get_egnyte_token():
     logger.info(f"   Domain: {DOMAIN}")
     logger.info(f"   Username: {USERNAME}")
     logger.info(f"   Client ID: {CLIENT_ID}")
+    logger.info(f"   Client Secret: {'*' * len(CLIENT_SECRET) if CLIENT_SECRET else 'None'}")
     logger.info(f"   Password: {'*' * len(PASSWORD) if PASSWORD else 'None'}")
         
     url = f"https://{DOMAIN}/puboauth/token"
@@ -133,13 +135,18 @@ def get_egnyte_token():
     }
     
     logger.info(f"🌐 Making request to: {url}")
-    logger.info(f"📋 Request data: grant_type=password, username={USERNAME}, client_id={CLIENT_ID}")
+    logger.info(f"📋 Request data: grant_type=password, username={USERNAME}, client_id={CLIENT_ID}, client_secret={'*' * len(CLIENT_SECRET) if CLIENT_SECRET else 'None'}")
     
     try:
-        response = requests.post(url, data=data, headers=headers)
+        # Use urllib.parse.urlencode to properly encode form data
+        encoded_data = urllib.parse.urlencode(data)
+        logger.info(f"🔧 Encoded data: {encoded_data.replace(PASSWORD, '*' * len(PASSWORD)).replace(CLIENT_SECRET, '*' * len(CLIENT_SECRET))}")
+        
+        response = requests.post(url, data=encoded_data, headers=headers)
         
         logger.info(f"📊 Response Status: {response.status_code}")
         logger.info(f"📋 Response Headers: {dict(response.headers)}")
+        logger.info(f"📄 Response Body: {response.text}")
         
         if response.status_code == 200:
             token_data = response.json()
@@ -377,15 +384,17 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         project_folder_name = f"Project; Molecule {molecule_code}"
         
         # First, try to list existing folders to check for duplicates
-        existing_folders = list_egnyte_folder_contents(access_token, ROOT_FOLDER)
-        if existing_folders:
+        existing_folders_data = list_egnyte_folder_contents(access_token, ROOT_FOLDER)
+        if existing_folders_data and isinstance(existing_folders_data, dict):
+            existing_folders = existing_folders_data.get("folders", [])
             for folder in existing_folders:
                 if folder.get('name') == project_folder_name:
                     # Check if campaign folder already exists
                     campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_number})"
-                    campaign_contents = list_egnyte_folder_contents(access_token, folder.get('folder_id'))
-                    if campaign_contents:
-                        for campaign_folder in campaign_contents:
+                    campaign_contents_data = list_egnyte_folder_contents(access_token, folder.get('folder_id'))
+                    if campaign_contents_data and isinstance(campaign_contents_data, dict):
+                        campaign_folders = campaign_contents_data.get("folders", [])
+                        for campaign_folder in campaign_folders:
                             if campaign_folder.get('name') == campaign_folder_name:
                                 job_status[job_key] = {
                                     "status": "failed",
