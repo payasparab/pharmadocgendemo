@@ -47,6 +47,8 @@ def get_folder_details(access_token, folder_id):
     }
     
     try:
+        # Add rate limiting delay
+        rate_limit_delay()
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         
@@ -59,9 +61,10 @@ def get_folder_details(access_token, folder_id):
         
     except requests.HTTPError as e:
         if "Developer Over Qps" in e.response.text:
-            print(f"⚠️ Rate limit hit, waiting 2 seconds before retry...")
-            time.sleep(2)
+            print(f"⚠️ Rate limit hit, waiting 3 seconds before retry...")
+            time.sleep(3)  # Longer wait for rate limit recovery
             try:
+                rate_limit_delay()  # Add rate limiting before retry
                 response = requests.get(url, headers=headers)
                 response.raise_for_status()
                 
@@ -98,6 +101,8 @@ def list_folder_contents(access_token, folder_id):
     }
     
     try:
+        # Add rate limiting delay
+        rate_limit_delay()
         response = requests.get(url, headers=headers, params=params)
         response.raise_for_status()
         
@@ -141,9 +146,10 @@ def list_folder_contents(access_token, folder_id):
         
     except requests.HTTPError as e:
         if "Developer Over Qps" in e.response.text:
-            print(f"⚠️ Rate limit hit, waiting 2 seconds before retry...")
-            time.sleep(2)
+            print(f"⚠️ Rate limit hit, waiting 3 seconds before retry...")
+            time.sleep(3)  # Longer wait for rate limit recovery
             try:
+                rate_limit_delay()  # Add rate limiting before retry
                 response = requests.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 
@@ -210,6 +216,8 @@ def create_folder(access_token, parent_folder_id, folder_name):
     }
     
     try:
+        # Add rate limiting delay
+        rate_limit_delay()
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
         
@@ -223,9 +231,10 @@ def create_folder(access_token, parent_folder_id, folder_name):
         
     except requests.HTTPError as e:
         if "Developer Over Qps" in e.response.text:
-            print(f"⚠️ Rate limit hit, waiting 2 seconds before retry...")
-            time.sleep(2)
+            print(f"⚠️ Rate limit hit, waiting 3 seconds before retry...")
+            time.sleep(3)  # Longer wait for rate limit recovery
             try:
+                rate_limit_delay()  # Add rate limiting before retry
                 response = requests.post(url, headers=headers, json=data)
                 response.raise_for_status()
                 

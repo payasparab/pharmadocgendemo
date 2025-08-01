@@ -36,11 +36,7 @@ def main():
     print(f"   {folder_url}")
     print(f"   Path: {folder_path}")
     
-    # Add a small delay to prevent rate limiting
-    import time
-    time.sleep(1)
-    
-    # List folder contents
+    # List folder contents (rate limiting is now automatic)
     contents = list_folder_contents(token, ROOT_FOLDER)
     
     if contents:
