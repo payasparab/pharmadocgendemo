@@ -115,6 +115,12 @@ def get_egnyte_token():
     if not EGNYTE_AVAILABLE:
         logger.error("Egnyte credentials not available")
         return None
+    
+    logger.info(f"🔐 Attempting Egnyte authentication...")
+    logger.info(f"   Domain: {DOMAIN}")
+    logger.info(f"   Username: {USERNAME}")
+    logger.info(f"   Client ID: {CLIENT_ID}")
+    logger.info(f"   Password: {'*' * len(PASSWORD) if PASSWORD else 'None'}")
         
     url = f"https://{DOMAIN}/puboauth/token"
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -126,13 +132,71 @@ def get_egnyte_token():
         "client_secret": CLIENT_SECRET
     }
     
+    logger.info(f"🌐 Making request to: {url}")
+    logger.info(f"📋 Request data: grant_type=password, username={USERNAME}, client_id={CLIENT_ID}")
+    
     try:
         response = requests.post(url, data=data, headers=headers)
-        response.raise_for_status()
-        token_data = response.json()
-        return token_data["access_token"]
+        
+        logger.info(f"📊 Response Status: {response.status_code}")
+        logger.info(f"📋 Response Headers: {dict(response.headers)}")
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            access_token = token_data["access_token"]
+            expires_in = token_data.get("expires_in", "unknown")
+            token_type = token_data.get("token_type", "unknown")
+            
+            logger.info(f"✅ Authentication successful!")
+            logger.info(f"   Token Type: {token_type}")
+            logger.info(f"   Expires In: {expires_in}")
+            logger.info(f"   Access Token: {access_token[:20]}...")
+            
+            return access_token
+        else:
+            logger.error(f"❌ Authentication failed!")
+            logger.error(f"   Status Code: {response.status_code}")
+            logger.error(f"   Response Text: {response.text}")
+            
+            # Check for specific error types
+            error_text = response.text.lower()
+            if "invalid username" in error_text or "invalid password" in error_text:
+                logger.error(f"   Error Type: Invalid credentials")
+            elif "rate limit" in error_text or "qps" in error_text:
+                logger.error(f"   Error Type: Rate limiting")
+            elif "ip" in error_text or "restricted" in error_text:
+                logger.error(f"   Error Type: IP restriction")
+            elif "locked" in error_text or "suspended" in error_text:
+                logger.error(f"   Error Type: Account locked/suspended")
+            else:
+                logger.error(f"   Error Type: Unknown")
+            
+            # Check for specific headers that might indicate the issue
+            if 'X-Mashery-Error-Code' in response.headers:
+                error_code = response.headers['X-Mashery-Error-Code']
+                logger.error(f"   Mashery Error Code: {error_code}")
+            
+            if 'Retry-After' in response.headers:
+                retry_after = response.headers['Retry-After']
+                logger.error(f"   Retry After: {retry_after} seconds")
+            
+            return None
+            
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"❌ Connection error: {e}")
+        logger.error(f"   This might indicate network issues or domain problems")
+        return None
+    except requests.exceptions.Timeout as e:
+        logger.error(f"❌ Timeout error: {e}")
+        logger.error(f"   Request timed out - server might be slow or unreachable")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Request error: {e}")
+        logger.error(f"   General request failure")
+        return None
     except Exception as e:
-        logger.error(f"Error getting Egnyte token: {e}")
+        logger.error(f"❌ Unexpected error getting Egnyte token: {e}")
+        logger.error(f"   Error type: {type(e).__name__}")
         return None
 
 def create_egnyte_folder(access_token, parent_folder_id, folder_name):
