@@ -2041,6 +2041,517 @@ def egnyte_create_folder():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/egnyte-list-templates', methods=['GET'])
+def egnyte_list_templates():
+    """List all items in the templates folder"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
+    try:
+        templates_folder_id = "966281ab-54c3-47ea-b20f-b38ed2ef9b30"
+        
+        access_token = get_egnyte_token()
+        if not access_token:
+            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+        
+        folder_data = list_egnyte_folder_contents(access_token, templates_folder_id)
+        if not folder_data:
+            return jsonify({"error": "Failed to list templates folder contents"}), 500
+        
+        return jsonify({
+            "status": "success",
+            "folder_id": templates_folder_id,
+            "templates": folder_data.get("files", []),
+            "folders": folder_data.get("folders", []),
+            "total_templates": len(folder_data.get("files", [])),
+            "total_folders": len(folder_data.get("folders", []))
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/egnyte-list-source-documents', methods=['GET'])
+def egnyte_list_source_documents():
+    """List all items in the source documents folder"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
+    try:
+        source_docs_folder_id = "56545792-6b5d-4fc3-8e78-31d401bd7088"
+        
+        access_token = get_egnyte_token()
+        if not access_token:
+            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+        
+        folder_data = list_egnyte_folder_contents(access_token, source_docs_folder_id)
+        if not folder_data:
+            return jsonify({"error": "Failed to list source documents folder contents"}), 500
+        
+        return jsonify({
+            "status": "success",
+            "folder_id": source_docs_folder_id,
+            "documents": folder_data.get("files", []),
+            "folders": folder_data.get("folders", []),
+            "total_documents": len(folder_data.get("files", [])),
+            "total_folders": len(folder_data.get("folders", []))
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/egnyte-download-file', methods=['POST'])
+def egnyte_download_file():
+    """Download a file from Egnyte"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        file_id = data.get('file_id')
+        
+        if not file_id:
+            return jsonify({"error": "file_id is required"}), 400
+        
+        access_token = get_egnyte_token()
+        if not access_token:
+            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+        
+        # Download the file
+        url = f"https://{DOMAIN}/pubapi/v1/fs-content/ids/file/{file_id}"
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+        
+        try:
+            rate_limit_delay()
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            
+            # Return the file content as base64
+            file_content = base64.b64encode(response.content).decode('utf-8')
+            
+            return jsonify({
+                "status": "success",
+                "file_id": file_id,
+                "content": file_content,
+                "content_type": response.headers.get('content-type', 'application/octet-stream'),
+                "size": len(response.content)
+            })
+            
+        except requests.HTTPError as e:
+            logger.error(f"Failed to download file {file_id}: {e}")
+            return jsonify({"error": f"Failed to download file: {e}"}), 500
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/egnyte-generate-document', methods=['POST'])
+def egnyte_generate_document():
+    """Generate a new document using OpenAI and save to Egnyte"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+        
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        template_file_id = data.get('template_file_id')
+        source_document_ids = data.get('source_document_ids', [])
+        molecule_code = data.get('molecule_code')
+        campaign_number = data.get('campaign_number')
+        document_name = data.get('document_name', 'Generated Document')
+        
+        if not template_file_id:
+            return jsonify({"error": "template_file_id is required"}), 400
+        
+        if not source_document_ids:
+            return jsonify({"error": "source_document_ids is required"}), 400
+        
+        if not molecule_code or not campaign_number:
+            return jsonify({"error": "molecule_code and campaign_number are required"}), 400
+        
+        # Create job key for tracking
+        job_key = f"doc_gen_{molecule_code}_{campaign_number}_{int(time.time())}"
+        
+        # Start background thread
+        thread = threading.Thread(
+            target=background_generate_egnyte_document,
+            args=(template_file_id, source_document_ids, molecule_code, campaign_number, document_name, job_key),
+            daemon=True
+        )
+        thread.start()
+        
+        return jsonify({
+            "status": "started",
+            "message": "Document generation job started",
+            "job_key": job_key,
+            "poll_url": f"/egnyte-document-status?job_key={job_key}"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/egnyte-document-status', methods=['GET'])
+def egnyte_document_status():
+    """Check the status of a document generation job"""
+    try:
+        job_key = request.args.get('job_key')
+        
+        if not job_key:
+            return jsonify({"error": "job_key is required"}), 400
+        
+        if job_key not in job_status:
+            return jsonify({
+                "status": "not_found",
+                "message": "No document generation job found",
+                "job_key": job_key
+            })
+        
+        status_info = job_status[job_key]
+        
+        response = {
+            "status": status_info["status"],
+            "message": status_info["message"],
+            "job_key": job_key,
+            "started_at": status_info["started_at"]
+        }
+        
+        # Add progress if available
+        if "progress" in status_info:
+            response["progress"] = status_info["progress"]
+        
+        # Add completion time if available
+        if "completed_at" in status_info:
+            response["completed_at"] = status_info["completed_at"]
+        
+        # Add result data if completed
+        if status_info["status"] == "completed" and job_key in job_results:
+            response["data"] = job_results[job_key]
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def background_generate_egnyte_document(template_file_id, source_document_ids, molecule_code, campaign_number, document_name, job_key):
+    """Background function to generate document using OpenAI and save to Egnyte"""
+    logger.info(f"BACKGROUND: Starting document generation for {job_key}")
+    
+    try:
+        # Update status to running
+        job_status[job_key] = {
+            "status": "running",
+            "message": "Starting document generation...",
+            "started_at": datetime.now().isoformat(),
+            "progress": 0
+        }
+        
+        # Get access token
+        access_token = get_egnyte_token()
+        if not access_token:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to get Egnyte access token",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Update progress
+        job_status[job_key]["progress"] = 10
+        job_status[job_key]["message"] = "Downloading template file..."
+        
+        # Download template file
+        template_content = download_egnyte_file(access_token, template_file_id)
+        if not template_content:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to download template file",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Update progress
+        job_status[job_key]["progress"] = 20
+        job_status[job_key]["message"] = "Downloading source documents..."
+        
+        # Download source documents
+        source_contents = []
+        for i, doc_id in enumerate(source_document_ids):
+            content = download_egnyte_file(access_token, doc_id)
+            if content:
+                source_contents.append(content)
+            
+            # Update progress for each document
+            progress = 20 + (i + 1) * 20 // len(source_document_ids)
+            job_status[job_key]["progress"] = progress
+            job_status[job_key]["message"] = f"Downloaded {i + 1}/{len(source_document_ids)} source documents..."
+        
+        if not source_contents:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to download any source documents",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Update progress
+        job_status[job_key]["progress"] = 60
+        job_status[job_key]["message"] = "Generating document with OpenAI..."
+        
+        # Generate document using OpenAI
+        generated_content = generate_document_with_openai(template_content, source_contents, document_name)
+        if not generated_content:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to generate document with OpenAI",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Update progress
+        job_status[job_key]["progress"] = 80
+        job_status[job_key]["message"] = "Saving document to Egnyte..."
+        
+        # Find the target folder in Egnyte
+        target_folder_id = find_egnyte_target_folder(access_token, molecule_code, campaign_number)
+        if not target_folder_id:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to find target folder in Egnyte",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Upload the generated document
+        file_name = f"{document_name}_{molecule_code}_Campaign_{campaign_number}.docx"
+        uploaded_file = upload_file_to_egnyte(access_token, target_folder_id, file_name, generated_content)
+        if not uploaded_file:
+            job_status[job_key] = {
+                "status": "failed",
+                "message": "Failed to upload document to Egnyte",
+                "started_at": job_status[job_key]["started_at"],
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+        
+        # Store the result
+        job_results[job_key] = {
+            "status": "success",
+            "file_name": file_name,
+            "file_id": uploaded_file.get('entry_id'),
+            "file_url": f"https://{DOMAIN}/app/index.do#storage/files/1{uploaded_file.get('path', '')}",
+            "molecule_code": molecule_code,
+            "campaign_number": campaign_number,
+            "document_name": document_name
+        }
+        
+        # Update status to completed
+        job_status[job_key] = {
+            "status": "completed",
+            "message": "Document generated and saved successfully",
+            "started_at": job_status[job_key]["started_at"],
+            "completed_at": datetime.now().isoformat(),
+            "progress": 100
+        }
+        
+        logger.info(f"Background document generation completed for {job_key}")
+        
+    except Exception as e:
+        logger.error(f"Background document generation failed for {job_key}: {e}")
+        job_status[job_key] = {
+            "status": "failed",
+            "message": f"Error: {str(e)}",
+            "started_at": job_status[job_key]["started_at"],
+            "completed_at": datetime.now().isoformat()
+        }
+
+def download_egnyte_file(access_token, file_id):
+    """Download a file from Egnyte and return its content"""
+    try:
+        url = f"https://{DOMAIN}/pubapi/v1/fs-content/ids/file/{file_id}"
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+        
+        rate_limit_delay()
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        return response.content
+        
+    except Exception as e:
+        logger.error(f"Error downloading file {file_id}: {e}")
+        return None
+
+def find_egnyte_target_folder(access_token, molecule_code, campaign_number):
+    """Find the target folder in Egnyte for the generated document"""
+    try:
+        # First, find the project folder
+        project_folder_name = f"Project; Molecule {molecule_code}"
+        project_folder = find_folder_by_name(access_token, ROOT_FOLDER, project_folder_name)
+        
+        if not project_folder:
+            logger.error(f"Project folder not found: {project_folder_name}")
+            return None
+        
+        # Find the campaign folder
+        campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_number})"
+        campaign_folder = find_folder_by_name(access_token, project_folder.get('folder_id'), campaign_folder_name)
+        
+        if not campaign_folder:
+            logger.error(f"Campaign folder not found: {campaign_folder_name}")
+            return None
+        
+        # Find the Draft AI Reg Document folder
+        reg_doc_folder = find_folder_by_name(access_token, project_folder.get('folder_id'), "Draft AI Reg Document")
+        
+        if not reg_doc_folder:
+            logger.error("Draft AI Reg Document folder not found")
+            return None
+        
+        return reg_doc_folder.get('folder_id')
+        
+    except Exception as e:
+        logger.error(f"Error finding target folder: {e}")
+        return None
+
+def find_folder_by_name(access_token, parent_folder_id, folder_name):
+    """Find a folder by name in a parent folder"""
+    try:
+        folder_data = list_egnyte_folder_contents(access_token, parent_folder_id)
+        if folder_data and isinstance(folder_data, dict):
+            folders = folder_data.get("folders", [])
+            for folder in folders:
+                if folder.get('name') == folder_name:
+                    return folder
+        return None
+    except Exception as e:
+        logger.error(f"Error finding folder by name: {e}")
+        return None
+
+def upload_file_to_egnyte(access_token, folder_id, file_name, file_content):
+    """Upload a file to Egnyte"""
+    try:
+        url = f"https://{DOMAIN}/pubapi/v1/fs-content/ids/folder/{folder_id}"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+        
+        files = {
+            'file': (file_name, file_content, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        }
+        
+        rate_limit_delay()
+        response = requests.post(url, headers=headers, files=files)
+        response.raise_for_status()
+        
+        return response.json()
+        
+    except Exception as e:
+        logger.error(f"Error uploading file to Egnyte: {e}")
+        return None
+
+def generate_document_with_openai(template_content, source_contents, document_name):
+    """Generate a document using OpenAI based on template and source documents"""
+    try:
+        # Initialize OpenAI
+        client = initialize_openai()
+        if not client:
+            logger.error("Failed to initialize OpenAI")
+            return None
+        
+        # Convert template content to text (assuming it's a Word document)
+        template_text = extract_text_from_docx(template_content)
+        
+        # Convert source documents to text
+        source_texts = []
+        for content in source_contents:
+            text = extract_text_from_docx(content)
+            if text:
+                source_texts.append(text)
+        
+        # Create the prompt for OpenAI
+        prompt = f"""
+        You are a document generation assistant. Please create a new document based on the following:
+
+        TEMPLATE DOCUMENT:
+        {template_text}
+
+        SOURCE DOCUMENTS:
+        {chr(10).join([f"Document {i+1}: {text}" for i, text in enumerate(source_texts)])}
+
+        INSTRUCTIONS:
+        1. Use the template document as the structure and format
+        2. Incorporate relevant information from the source documents
+        3. Create a comprehensive, well-structured document
+        4. Maintain professional tone and formatting
+        5. Document name: {document_name}
+
+        Please generate the complete document content.
+        """
+        
+        # Call OpenAI
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a professional document generation assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=4000,
+            temperature=0.7
+        )
+        
+        generated_text = response.choices[0].message.content
+        
+        # Convert the generated text back to a Word document
+        doc = Document()
+        
+        # Add title
+        title = doc.add_heading(document_name, 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add content
+        paragraphs = generated_text.split('\n\n')
+        for paragraph in paragraphs:
+            if paragraph.strip():
+                doc.add_paragraph(paragraph.strip())
+        
+        # Save to bytes
+        doc_bytes = io.BytesIO()
+        doc.save(doc_bytes)
+        doc_bytes.seek(0)
+        
+        return doc_bytes.getvalue()
+        
+    except Exception as e:
+        logger.error(f"Error generating document with OpenAI: {e}")
+        return None
+
+def extract_text_from_docx(docx_content):
+    """Extract text from a Word document"""
+    try:
+        doc = Document(io.BytesIO(docx_content))
+        text = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text.append(paragraph.text.strip())
+        return '\n\n'.join(text)
+    except Exception as e:
+        logger.error(f"Error extracting text from DOCX: {e}")
+        return ""
+
 if __name__ == '__main__':
     # For local development
     app.run(debug=True, host='0.0.0.0', port=5000) 
