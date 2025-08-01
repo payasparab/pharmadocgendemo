@@ -407,7 +407,7 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         # Create project folder
         project_folder = create_egnyte_folder(access_token, ROOT_FOLDER, project_folder_name)
         
-        if not project_folder:
+        if not project_folder or not isinstance(project_folder, dict):
             job_status[job_key] = {
                 "status": "failed",
                 "message": "Failed to create project folder",
@@ -426,7 +426,7 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_number})"
         campaign_folder = create_egnyte_folder(access_token, project_folder_id, campaign_folder_name)
         
-        if not campaign_folder:
+        if not campaign_folder or not isinstance(campaign_folder, dict):
             job_status[job_key] = {
                 "status": "failed",
                 "message": "Failed to create campaign folder",
@@ -445,7 +445,7 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         pre_folder = create_egnyte_folder(access_token, campaign_folder_id, "Pre")
         post_folder = create_egnyte_folder(access_token, campaign_folder_id, "Post")
         
-        if not pre_folder or not post_folder:
+        if not pre_folder or not isinstance(pre_folder, dict) or not post_folder or not isinstance(post_folder, dict):
             job_status[job_key] = {
                 "status": "failed",
                 "message": "Failed to create Pre/Post folders",
@@ -466,7 +466,7 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
             
             for dept in departments:
                 dept_folder = create_egnyte_folder(access_token, phase_folder_id, dept)
-                if dept_folder:
+                if dept_folder and isinstance(dept_folder, dict):
                     dept_folder_id = dept_folder.get('folder_id')
                     
                     # Create status folders under each department
@@ -479,7 +479,7 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         
         # Create Draft AI Reg Document folder under project
         reg_doc_folder = create_egnyte_folder(access_token, project_folder_id, "Draft AI Reg Document")
-        if not reg_doc_folder:
+        if not reg_doc_folder or not isinstance(reg_doc_folder, dict):
             job_status[job_key] = {
                 "status": "failed",
                 "message": "Failed to create Draft AI Reg Document folder",
@@ -498,7 +498,7 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         reg_types = ["IND", "IMPD", "Canada"]
         for reg_type in reg_types:
             reg_type_folder = create_egnyte_folder(access_token, reg_doc_folder_id, reg_type)
-            if reg_type_folder:
+            if reg_type_folder and isinstance(reg_type_folder, dict):
                 reg_type_folder_id = reg_type_folder.get('folder_id')
                 
                 for status in statuses:
