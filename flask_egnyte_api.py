@@ -121,8 +121,29 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         job_status[job_key]["progress"] = 20
         job_status[job_key]["message"] = "Creating project folder..."
         
-        # Create project folder
+        # Check if project folder already exists
         project_folder_name = f"Project; Molecule {molecule_code}"
+        
+        # First, try to list existing folders to check for duplicates
+        existing_folders = list_egnyte_folder_contents(access_token, ROOT_FOLDER)
+        if existing_folders:
+            for folder in existing_folders:
+                if folder.get('name') == project_folder_name:
+                    # Check if campaign folder already exists
+                    campaign_folder_name = f"Project {molecule_code} (Campaign #{campaign_number})"
+                    campaign_contents = list_egnyte_folder_contents(access_token, folder.get('folder_id'))
+                    if campaign_contents:
+                        for campaign_folder in campaign_contents:
+                            if campaign_folder.get('name') == campaign_folder_name:
+                                job_status[job_key] = {
+                                    "status": "failed",
+                                    "message": f"Project {molecule_code} Campaign {campaign_number} already exists",
+                                    "started_at": job_status[job_key]["started_at"],
+                                    "completed_at": datetime.now().isoformat()
+                                }
+                                return
+        
+        # Create project folder
         project_folder = create_egnyte_folder(access_token, ROOT_FOLDER, project_folder_name)
         
         if not project_folder:
