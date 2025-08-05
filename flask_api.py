@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file 
 import pandas as pd
 import io
 import base64
@@ -30,6 +30,8 @@ import time
 from datetime import datetime
 import requests
 import urllib.parse
+from flask_cors import CORS
+
 
 # Try to import credentials, fall back to environment variables if not available
 try:
@@ -74,6 +76,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+CORS(app) 
 
 # In-memory storage for job results
 job_results = {}
