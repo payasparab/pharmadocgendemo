@@ -581,7 +581,6 @@ def initialize_openai():
             return None
     return None
 
-
 def create_sample_pharma_data():
     """Create sample pharmaceutical composition data"""
     data = {
@@ -1714,6 +1713,29 @@ def egnyte_clear_cache():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/reg-docs-bulk-request', methods=['POST'])
+def reg_docs_bulk_request():
+    """Bulk request for regulatory documents"""
+    try:
+        data = request.get_json()
+        timestamp_clean = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        request_df = pd.DataFrame(data)
+        print(request_df.columns)
+        
+        # Check that request contains docs 
+        if len(request_df) == 0:
+            return jsonify({"status": "error", "message": "No requests from campaign folder received"}), 400
+        
+        print("Received bulk request from Retool at ", timestamp_clean)
+        return jsonify({"status": "success", "message": "Bulk request received"}), 200
+    except Exception as e:
+        logger.error(f"Error in folder_status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     # For local development
     app.run(debug=True, host='0.0.0.0', port=5000) 
+
