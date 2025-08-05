@@ -1739,8 +1739,13 @@ def reg_docs_bulk_request():
         print(f"Unique product codes: {unique_product_codes}")
         
         # Extract root names from reg doc versions (everything left of "v" and stripped)
-        request_df['reg_doc_version_active_root'] = request_df['reg_doc_version_active'].str.split('v').str[0].str.strip()
-        request_df['reg_doc_version_placebo_root'] = request_df['reg_doc_version_placebo'].str.split('v').str[0].str.strip()
+        # Handle null values safely
+        request_df['reg_doc_version_active_root'] = request_df['reg_doc_version_active'].apply(
+            lambda x: x.split('v')[0].strip() if x and isinstance(x, str) else None
+        )
+        request_df['reg_doc_version_placebo_root'] = request_df['reg_doc_version_placebo'].apply(
+            lambda x: x.split('v')[0].strip() if x and isinstance(x, str) else None
+        )
         
         print("Active reg doc version roots:", request_df['reg_doc_version_active_root'].unique().tolist())
         print("Placebo reg doc version roots:", request_df['reg_doc_version_placebo_root'].unique().tolist())
@@ -1781,11 +1786,15 @@ def reg_docs_bulk_request():
             matching_templates = []
             for template in templates:
                 template_name = template.get('name', '').lower()
-                active_root = row['reg_doc_version_active_root'].lower()
-                placebo_root = row['reg_doc_version_placebo_root'].lower()
+                active_root = row['reg_doc_version_active_root']
+                placebo_root = row['reg_doc_version_placebo_root']
+                
+                # Convert to lowercase only if not None
+                active_root_lower = active_root.lower() if active_root else ""
+                placebo_root_lower = placebo_root.lower() if placebo_root else ""
                 
                 # Check if template matches either active or placebo root
-                if active_root in template_name or placebo_root in template_name:
+                if active_root_lower in template_name or placebo_root_lower in template_name:
                     matching_templates.append(template)
                     print(f"  ✓ Template match: {template.get('name')}")
             
@@ -1793,11 +1802,15 @@ def reg_docs_bulk_request():
             matching_source_docs = []
             for source_doc in source_docs:
                 source_doc_name = source_doc.get('name', '').lower()
-                active_root = row['reg_doc_version_active_root'].lower()
-                placebo_root = row['reg_doc_version_placebo_root'].lower()
+                active_root = row['reg_doc_version_active_root']
+                placebo_root = row['reg_doc_version_placebo_root']
+                
+                # Convert to lowercase only if not None
+                active_root_lower = active_root.lower() if active_root else ""
+                placebo_root_lower = placebo_root.lower() if placebo_root else ""
                 
                 # Check if source document matches either active or placebo root
-                if active_root in source_doc_name or placebo_root in source_doc_name:
+                if active_root_lower in source_doc_name or placebo_root_lower in source_doc_name:
                     matching_source_docs.append(source_doc)
                     print(f"  ✓ Source doc match: {source_doc.get('name')}")
             
