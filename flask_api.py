@@ -1725,16 +1725,114 @@ def reg_docs_bulk_request():
         timestamp_clean = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
         request_df = pd.DataFrame(data)
-        print(request_df.columns)
+        print("Request DataFrame columns:", request_df.columns.tolist())
         
         # Check that request contains docs 
         if len(request_df) == 0:
             return jsonify({"status": "error", "message": "No requests from campaign folder received"}), 400
         
         print("Received bulk request from Retool at ", timestamp_clean)
-        return jsonify({"status": "success", "message": "Bulk request received"}), 200
+        print(f"Processing {len(request_df)} requests")
+        
+        # Get unique product codes
+        unique_product_codes = request_df['product_code'].unique().tolist()
+        print(f"Unique product codes: {unique_product_codes}")
+        
+        # Extract root names from reg doc versions (everything left of "v" and stripped)
+        request_df['reg_doc_version_active_root'] = request_df['reg_doc_version_active'].str.split('v').str[0].str.strip()
+        request_df['reg_doc_version_placebo_root'] = request_df['reg_doc_version_placebo'].str.split('v').str[0].str.strip()
+        
+        print("Active reg doc version roots:", request_df['reg_doc_version_active_root'].unique().tolist())
+        print("Placebo reg doc version roots:", request_df['reg_doc_version_placebo_root'].unique().tolist())
+        
+        # Get Egnyte access token
+        access_token = get_egnyte_token()
+        if not access_token:
+            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+        
+        # Get templates from Egnyte
+        templates_folder_id = "966281ab-54c3-47ea-b20f-b38ed2ef9b30"
+        templates_data = list_egnyte_folder_contents(access_token, templates_folder_id)
+        if not templates_data:
+            return jsonify({"error": "Failed to list templates folder contents"}), 500
+        
+        templates = templates_data.get("files", [])
+        print(f"Found {len(templates)} templates in Egnyte")
+        
+        # Get source documents from Egnyte
+        source_docs_folder_id = "56545792-6b5d-4fc3-8e78-31d401bd7088"
+        source_docs_data = list_egnyte_folder_contents(access_token, source_docs_folder_id)
+        if not source_docs_data:
+            return jsonify({"error": "Failed to list source documents folder contents"}), 500
+        
+        source_docs = source_docs_data.get("files", [])
+        print(f"Found {len(source_docs)} source documents in Egnyte")
+        
+        # Process each request row
+        matches = []
+        for idx, row in request_df.iterrows():
+            print(f"\n--- Processing Row {idx + 1} ---")
+            print(f"Product Code: {row['product_code']}")
+            print(f"Active Reg Doc Root: {row['reg_doc_version_active_root']}")
+            print(f"Placebo Reg Doc Root: {row['reg_doc_version_placebo_root']}")
+            print(f"Section: {row['section']}")
+            
+            # Find matching templates
+            matching_templates = []
+            for template in templates:
+                template_name = template.get('name', '').lower()
+                active_root = row['reg_doc_version_active_root'].lower()
+                placebo_root = row['reg_doc_version_placebo_root'].lower()
+                
+                # Check if template matches either active or placebo root
+                if active_root in template_name or placebo_root in template_name:
+                    matching_templates.append(template)
+                    print(f"  ✓ Template match: {template.get('name')}")
+            
+            # Find matching source documents
+            matching_source_docs = []
+            for source_doc in source_docs:
+                source_doc_name = source_doc.get('name', '').lower()
+                active_root = row['reg_doc_version_active_root'].lower()
+                placebo_root = row['reg_doc_version_placebo_root'].lower()
+                
+                # Check if source document matches either active or placebo root
+                if active_root in source_doc_name or placebo_root in source_doc_name:
+                    matching_source_docs.append(source_doc)
+                    print(f"  ✓ Source doc match: {source_doc.get('name')}")
+            
+            # Store matches for this row
+            row_matches = {
+                'row_index': idx,
+                'row_data': row.to_dict(),
+                'matching_templates': matching_templates,
+                'matching_source_docs': matching_source_docs,
+                'total_templates': len(matching_templates),
+                'total_source_docs': len(matching_source_docs)
+            }
+            matches.append(row_matches)
+            
+            print(f"  Row {idx + 1} Summary: {len(matching_templates)} templates, {len(matching_source_docs)} source docs")
+        
+        # Print overall summary
+        total_matches = sum(len(match['matching_templates']) + len(match['matching_source_docs']) for match in matches)
+        print(f"\n=== OVERALL SUMMARY ===")
+        print(f"Total rows processed: {len(matches)}")
+        print(f"Total matches found: {total_matches}")
+        
+        return jsonify({
+            "status": "success", 
+            "message": "Bulk request processed successfully",
+            "data": {
+                "total_rows": len(matches),
+                "unique_product_codes": unique_product_codes,
+                "matches": matches,
+                "timestamp": timestamp_clean
+            }
+        }), 200
+        
     except Exception as e:
-        logger.error(f"Error in folder_status: {e}")
+        logger.error(f"Error in reg_docs_bulk_request: {e}")
         return jsonify({"error": str(e)}), 500
 
 
