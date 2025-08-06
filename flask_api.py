@@ -30,6 +30,9 @@ import time
 from datetime import datetime
 import requests
 import urllib.parse
+import tempfile
+import os
+from bs4 import BeautifulSoup
 from flask_cors import CORS
 
 
@@ -1929,6 +1932,16 @@ def reg_docs_bulk_request():
         for summary in summary_table:
             print(f"{summary['status']}: {summary['count']} rows ({summary['percentage']}%)")
         
+        # Process document generation for matched rows
+        document_generation_results = []
+        for matched_row in matched_status_report:
+            generation_result = process_document_generation(matched_row)
+            document_generation_results.append({
+                'row_index': matched_row['row_index'],
+                'product_code': matched_row['row_data']['product_code'],
+                'generation_result': generation_result
+            })
+        
         return jsonify({
             "status": "success", 
             "message": "Bulk request processed successfully",
@@ -1939,6 +1952,7 @@ def reg_docs_bulk_request():
                 "matched_status_report": matched_status_report,
                 "status_summary_table": summary_table,
                 "latest_version_matches": latest_version_rows,
+                "document_generation_results": document_generation_results,
                 "timestamp": timestamp_clean
             }
         }), 200
@@ -1946,6 +1960,402 @@ def reg_docs_bulk_request():
     except Exception as e:
         logger.error(f"Error in reg_docs_bulk_request: {e}")
         return jsonify({"error": str(e)}), 500
+
+# Modular Functions for Document Processing Workflow
+
+def load_prompt_from_file():
+    """Load the prompt from demo_prompt.py"""
+    try:
+        with open('demo_prompt.py', 'r') as file:
+            content = file.read()
+            # Extract the prompt variable content
+            start = content.find('prompt = """') + 11
+            end = content.find('"""', start)
+            prompt = content[start:end]
+            return prompt
+    except Exception as e:
+        logger.error(f"Error loading prompt: {e}")
+        return None
+
+def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp'):
+    """Download a file from Egnyte to a temporary file"""
+    try:
+        # Download file content
+        file_content = download_egnyte_file(access_token, file_id)
+        if not file_content:
+            return None
+        
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
+        temp_file.write(file_content)
+        temp_file.close()
+        
+        return temp_file.name
+    except Exception as e:
+        logger.error(f"Error downloading file to temp: {e}")
+        return None
+
+def process_template_with_openai(template_file_path):
+    """Process template document using OpenAI Files API"""
+    try:
+        client = initialize_openai()
+        if not client:
+            return None
+        
+        # Upload the template file to OpenAI
+        with open(template_file_path, 'rb') as file:
+            response = client.files.create(
+                file=file,
+                purpose='assistants'
+            )
+            file_id = response.id
+        
+        # Create an assistant to process the template
+        assistant = client.beta.assistants.create(
+            name="Template Processor",
+            instructions="Extract the template structure and placeholders from this document",
+            tools=[{"type": "retrieval"}],
+            file_ids=[file_id]
+        )
+        
+        # Create a thread and run
+        thread = client.beta.threads.create()
+        message = client.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content="Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled."
+        )
+        
+        run = client.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=assistant.id
+        )
+        
+        # Wait for completion
+        while run.status != 'completed':
+            time.sleep(1)
+            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+        
+        # Get the response
+        messages = client.beta.threads.messages.list(thread_id=thread.id)
+        template_analysis = messages.data[0].content[0].text.value
+        
+        # Clean up
+        client.files.delete(file_id)
+        client.beta.assistants.delete(assistant.id)
+        
+        return template_analysis
+        
+    except Exception as e:
+        logger.error(f"Error processing template with OpenAI: {e}")
+        return None
+
+def extract_pdf_information_with_openai(pdf_file_path):
+    """Extract information from PDF using OpenAI Files API"""
+    try:
+        client = initialize_openai()
+        if not client:
+            return None
+        
+        # Upload the PDF file to OpenAI
+        with open(pdf_file_path, 'rb') as file:
+            response = client.files.create(
+                file=file,
+                purpose='assistants'
+            )
+            file_id = response.id
+        
+        # Create an assistant to extract information
+        assistant = client.beta.assistants.create(
+            name="PDF Information Extractor",
+            instructions="Extract all key information from this pharmaceutical product specification document including product details, composition data, and specifications. Return the information in a structured JSON format.",
+            tools=[{"type": "retrieval"}],
+            file_ids=[file_id]
+        )
+        
+        # Create a thread and run
+        thread = client.beta.threads.create()
+        message = client.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content="Extract all key information from this document including: product code, product description, composition data, specifications, and any other relevant pharmaceutical information. Return as structured JSON."
+        )
+        
+        run = client.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=assistant.id
+        )
+        
+        # Wait for completion
+        while run.status != 'completed':
+            time.sleep(1)
+            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+        
+        # Get the response
+        messages = client.beta.threads.messages.list(thread_id=thread.id)
+        pdf_information = messages.data[0].content[0].text.value
+        
+        # Clean up
+        client.files.delete(file_id)
+        client.beta.assistants.delete(assistant.id)
+        
+        return pdf_information
+        
+    except Exception as e:
+        logger.error(f"Error extracting PDF information with OpenAI: {e}")
+        return None
+
+def extract_row_data(row_data):
+    """Extract relevant data from the row"""
+    try:
+        relevant_data = {
+            'ctm': row_data.get('ctm'),
+            'product_code': row_data.get('product_code'),
+            'mfg_lot': row_data.get('mfg_lot'),
+            'mfg_type': row_data.get('mfg_type'),
+            'section': row_data.get('section'),
+            'filing_type': row_data.get('filing_type'),
+            'project': row_data.get('project'),
+            'module': row_data.get('module')
+        }
+        return relevant_data
+    except Exception as e:
+        logger.error(f"Error extracting row data: {e}")
+        return None
+
+def generate_final_document_with_openai(prompt, template_analysis, pdf_information, row_data):
+    """Generate final document using OpenAI API"""
+    try:
+        client = initialize_openai()
+        if not client:
+            return None
+        
+        # Prepare the consolidated information
+        consolidated_info = f"""
+PROMPT:
+{prompt}
+
+TEMPLATE ANALYSIS:
+{template_analysis}
+
+PDF INFORMATION:
+{pdf_information}
+
+ROW DATA:
+{json.dumps(row_data, indent=2)}
+
+INSTRUCTIONS:
+Based on the above information, generate a complete regulatory document in HTML format that can be converted to DOCX and PDF. The document should:
+1. Follow the template structure identified
+2. Include all relevant information from the PDF
+3. Use the row data for specific details
+4. Be properly formatted for regulatory submission
+5. Include all composition data and specifications
+6. Be ready for direct use in regulatory documentation
+
+Return the document in clean HTML format with proper styling.
+"""
+        
+        # Call OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a pharmaceutical regulatory document generation expert. Generate professional regulatory documents in HTML format."},
+                {"role": "user", "content": consolidated_info}
+            ],
+            max_tokens=4000,
+            temperature=0.3
+        )
+        
+        html_content = response.choices[0].message.content
+        return html_content
+        
+    except Exception as e:
+        logger.error(f"Error generating final document with OpenAI: {e}")
+        return None
+
+def convert_html_to_docx(html_content, output_path):
+    """Convert HTML content to DOCX format"""
+    try:
+        from docx import Document
+        from docx.shared import Inches
+        from bs4 import BeautifulSoup
+        import re
+        
+        # Parse HTML
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Create Word document
+        doc = Document()
+        
+        # Process HTML content
+        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'table']):
+            if element.name.startswith('h'):
+                level = int(element.name[1])
+                doc.add_heading(element.get_text(), level=level)
+            elif element.name == 'p':
+                doc.add_paragraph(element.get_text())
+            elif element.name == 'table':
+                # Handle tables
+                rows = element.find_all('tr')
+                if rows:
+                    table = doc.add_table(rows=len(rows), cols=len(rows[0].find_all(['td', 'th'])))
+                    table.style = 'Table Grid'
+                    
+                    for i, row in enumerate(rows):
+                        cells = row.find_all(['td', 'th'])
+                        for j, cell in enumerate(cells):
+                            if i < len(table.rows) and j < len(table.rows[i].cells):
+                                table.rows[i].cells[j].text = cell.get_text()
+        
+        # Save document
+        doc.save(output_path)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error converting HTML to DOCX: {e}")
+        return False
+
+def convert_html_to_pdf(html_content, output_path):
+    """Convert HTML content to PDF format"""
+    try:
+        from weasyprint import HTML, CSS
+        from weasyprint.text.fonts import FontConfiguration
+        
+        # Configure fonts
+        font_config = FontConfiguration()
+        
+        # Create PDF from HTML
+        html_doc = HTML(string=html_content)
+        css = CSS(string='''
+            body { font-family: Arial, sans-serif; font-size: 12pt; }
+            h1, h2, h3, h4, h5, h6 { color: #333; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+        ''', font_config=font_config)
+        
+        html_doc.write_pdf(output_path, stylesheets=[css], font_config=font_config)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error converting HTML to PDF: {e}")
+        return False
+
+def upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, folder_id):
+    """Upload generated files to Egnyte"""
+    try:
+        # Upload DOCX file
+        with open(docx_path, 'rb') as docx_file:
+            docx_content = docx_file.read()
+            docx_result = upload_file_to_egnyte(access_token, folder_id, os.path.basename(docx_path), docx_content)
+        
+        # Upload PDF file
+        with open(pdf_path, 'rb') as pdf_file:
+            pdf_content = pdf_file.read()
+            pdf_result = upload_file_to_egnyte(access_token, folder_id, os.path.basename(pdf_path), pdf_content)
+        
+        return {
+            'docx_uploaded': docx_result is not None,
+            'pdf_uploaded': pdf_result is not None,
+            'docx_result': docx_result,
+            'pdf_result': pdf_result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading files to Egnyte: {e}")
+        return None
+
+def process_document_generation(matched_row):
+    """Main function to process document generation for a matched row"""
+    try:
+        # Get Egnyte access token
+        access_token = get_egnyte_token()
+        if not access_token:
+            return {"error": "Failed to get Egnyte access token"}
+        
+        # Step 2: Load prompt
+        prompt = load_prompt_from_file()
+        if not prompt:
+            return {"error": "Failed to load prompt"}
+        
+        # Step 3: Process template
+        template_file = matched_row['matching_template']
+        if not template_file:
+            return {"error": "No template file found"}
+        
+        template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx')
+        if not template_temp_path:
+            return {"error": "Failed to download template file"}
+        
+        template_analysis = process_template_with_openai(template_temp_path)
+        os.unlink(template_temp_path)  # Clean up temp file
+        
+        if not template_analysis:
+            return {"error": "Failed to process template"}
+        
+        # Step 4: Process source document
+        source_file = matched_row['matching_source_document']
+        if not source_file:
+            return {"error": "No source document found"}
+        
+        source_temp_path = download_egnyte_file_to_temp(access_token, source_file['entry_id'], '.pdf')
+        if not source_temp_path:
+            return {"error": "Failed to download source document"}
+        
+        pdf_information = extract_pdf_information_with_openai(source_temp_path)
+        os.unlink(source_temp_path)  # Clean up temp file
+        
+        if not pdf_information:
+            return {"error": "Failed to extract PDF information"}
+        
+        # Step 5: Extract row data
+        row_data = extract_row_data(matched_row['row_data'])
+        if not row_data:
+            return {"error": "Failed to extract row data"}
+        
+        # Step 6: Generate final document
+        html_content = generate_final_document_with_openai(prompt, template_analysis, pdf_information, row_data)
+        if not html_content:
+            return {"error": "Failed to generate final document"}
+        
+        # Create output files
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        product_code = row_data['product_code']
+        docx_filename = f"{product_code}_regulatory_doc_{timestamp}.docx"
+        pdf_filename = f"{product_code}_regulatory_doc_{timestamp}.pdf"
+        
+        docx_path = os.path.join(tempfile.gettempdir(), docx_filename)
+        pdf_path = os.path.join(tempfile.gettempdir(), pdf_filename)
+        
+        # Convert to DOCX and PDF
+        docx_success = convert_html_to_docx(html_content, docx_path)
+        pdf_success = convert_html_to_pdf(html_content, pdf_path)
+        
+        if not docx_success or not pdf_success:
+            return {"error": "Failed to convert to DOCX or PDF"}
+        
+        # Upload to Egnyte
+        target_folder_id = "4a85f5e6-bb31-4bd1-b011-6fc75bdcb2d7"
+        upload_result = upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, target_folder_id)
+        
+        # Clean up temp files
+        os.unlink(docx_path)
+        os.unlink(pdf_path)
+        
+        if not upload_result:
+            return {"error": "Failed to upload files to Egnyte"}
+        
+        return {
+            "success": True,
+            "docx_filename": docx_filename,
+            "pdf_filename": pdf_filename,
+            "upload_result": upload_result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in process_document_generation: {e}")
+        return {"error": str(e)}
 
 
 if __name__ == '__main__':
