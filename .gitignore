@@ -54,3 +54,6 @@ output/
 # Logs
 *.log
 *.md
+
+# Random 
+local_notes.txt
