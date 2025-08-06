@@ -1934,27 +1934,62 @@ def reg_docs_bulk_request():
         
         # Process document generation for matched rows
         document_generation_results = []
+        generated_docs_urls = []
+        
         for matched_row in matched_status_report:
             generation_result = process_document_generation(matched_row)
+            
+            # Extract URLs if generation was successful
+            doc_urls = {}
+            if generation_result.get('success'):
+                upload_result = generation_result.get('upload_result', {})
+                docx_result = upload_result.get('docx_result', {})
+                pdf_result = upload_result.get('pdf_result', {})
+                
+                # Build full URLs
+                if docx_result:
+                    docx_url = f"https://{DOMAIN}/app/index.do#storage/files/1{docx_result.get('path', '')}"
+                    doc_urls['docx_url'] = docx_url
+                
+                if pdf_result:
+                    pdf_url = f"https://{DOMAIN}/app/index.do#storage/files/1{pdf_result.get('path', '')}"
+                    doc_urls['pdf_url'] = pdf_url
+            
             document_generation_results.append({
                 'row_index': matched_row['row_index'],
                 'product_code': matched_row['row_data']['product_code'],
-                'generation_result': generation_result
+                'generation_result': generation_result,
+                'doc_urls': doc_urls
             })
+            
+            # Add to generated docs URLs list
+            if doc_urls:
+                generated_docs_urls.append({
+                    'product_code': matched_row['row_data']['product_code'],
+                    'section': matched_row['row_data']['section'],
+                    'docx_filename': generation_result.get('docx_filename'),
+                    'pdf_filename': generation_result.get('pdf_filename'),
+                    'docx_url': doc_urls.get('docx_url'),
+                    'pdf_url': doc_urls.get('pdf_url')
+                })
+        
+        # Create total match report
+        total_match_report = {
+            'campaign_summary': {
+                'total_requests': len(request_df),
+                'successful_matches': len(matched_status_report),
+                'unique_product_codes': unique_product_codes,
+                'processing_timestamp': timestamp_clean
+            },
+            'status_breakdown': summary_table,
+            'generated_documents': generated_docs_urls,
+            'detailed_results': document_generation_results
+        }
         
         return jsonify({
             "status": "success", 
             "message": "Bulk request processed successfully",
-            "data": {
-                "total_rows_processed": len(request_df),
-                "latest_version_rows_with_matches": total_latest_matches,
-                "unique_product_codes": unique_product_codes,
-                "matched_status_report": matched_status_report,
-                "status_summary_table": summary_table,
-                "latest_version_matches": latest_version_rows,
-                "document_generation_results": document_generation_results,
-                "timestamp": timestamp_clean
-            }
+            "total_match_report": total_match_report
         }), 200
         
     except Exception as e:
