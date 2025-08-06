@@ -1738,17 +1738,45 @@ def reg_docs_bulk_request():
         unique_product_codes = request_df['product_code'].unique().tolist()
         print(f"Unique product codes: {unique_product_codes}")
         
-        # Extract root names from reg doc versions (everything left of "v" and stripped)
+        # Extract root names and latest versions from reg doc versions
         # Handle null values safely
-        request_df['reg_doc_version_active_root'] = request_df['reg_doc_version_active'].apply(
-            lambda x: x.split('v')[0].strip() if x and isinstance(x, str) else None
+        def extract_root_and_latest(version_str):
+            if not version_str or not isinstance(version_str, str):
+                return None, None
+            
+            # Extract root (everything before "v")
+            parts = version_str.split('v')
+            root = parts[0].strip() if parts[0] else None
+            
+            # Find all version numbers in the string (e.g., v1.0, v2.0, v3.1)
+            import re
+            versions = re.findall(r'v(\d+\.?\d*)', version_str)
+            
+            if not versions:
+                return root, None
+            
+            # Convert to float for comparison and find the latest
+            try:
+                latest_version = max(float(v) for v in versions)
+                latest = f"v{latest_version}"
+                return root, latest
+            except ValueError:
+                return root, None
+        
+        # Extract both root and latest version
+        request_df[['reg_doc_version_active_root', 'reg_doc_version_active_latest']] = pd.DataFrame(
+            request_df['reg_doc_version_active'].apply(extract_root_and_latest).tolist(), 
+            index=request_df.index
         )
-        request_df['reg_doc_version_placebo_root'] = request_df['reg_doc_version_placebo'].apply(
-            lambda x: x.split('v')[0].strip() if x and isinstance(x, str) else None
+        request_df[['reg_doc_version_placebo_root', 'reg_doc_version_placebo_latest']] = pd.DataFrame(
+            request_df['reg_doc_version_placebo'].apply(extract_root_and_latest).tolist(), 
+            index=request_df.index
         )
         
-        print("Active reg doc version roots:", request_df['reg_doc_version_active_root'].unique().tolist())
-        print("Placebo reg doc version roots:", request_df['reg_doc_version_placebo_root'].unique().tolist())
+        print("Active reg doc roots:", request_df['reg_doc_version_active_root'].unique().tolist())
+        print("Active reg doc latest versions:", request_df['reg_doc_version_active_latest'].unique().tolist())
+        print("Placebo reg doc roots:", request_df['reg_doc_version_placebo_root'].unique().tolist())
+        print("Placebo reg doc latest versions:", request_df['reg_doc_version_placebo_latest'].unique().tolist())
         
         # Get Egnyte access token
         access_token = get_egnyte_token()
@@ -1773,14 +1801,33 @@ def reg_docs_bulk_request():
         source_docs = source_docs_data.get("files", [])
         print(f"Found {len(source_docs)} source documents in Egnyte")
         
-        # Process each request row
-        matches = []
+        # Filter to only latest versions and process each request row
+        latest_version_rows = []
+        status_report = []
+        
         for idx, row in request_df.iterrows():
             print(f"\n--- Processing Row {idx + 1} ---")
             print(f"Product Code: {row['product_code']}")
             print(f"Active Reg Doc Root: {row['reg_doc_version_active_root']}")
+            print(f"Active Reg Doc Latest: {row['reg_doc_version_active_latest']}")
             print(f"Placebo Reg Doc Root: {row['reg_doc_version_placebo_root']}")
+            print(f"Placebo Reg Doc Latest: {row['reg_doc_version_placebo_latest']}")
             print(f"Section: {row['section']}")
+            
+            # Check if this is the latest version
+            active_is_latest = row['reg_doc_version_active_latest'] is not None
+            placebo_is_latest = row['reg_doc_version_placebo_latest'] is not None
+            
+            if not active_is_latest and not placebo_is_latest:
+                print(f"  ⚠️ Skipping - not latest version")
+                status_report.append({
+                    'row_index': idx,
+                    'row_data': row.to_dict(),
+                    'matching_source_document': None,
+                    'matching_template': None,
+                    'status': "old version"
+                })
+                continue
             
             # Find matching templates
             matching_templates = []
@@ -1814,32 +1861,82 @@ def reg_docs_bulk_request():
                     matching_source_docs.append(source_doc)
                     print(f"  ✓ Source doc match: {source_doc.get('name')}")
             
-            # Store matches for this row
-            row_matches = {
+            # Determine status and add to report
+            matching_template = matching_templates[0] if matching_templates else None
+            matching_source_doc = matching_source_docs[0] if matching_source_docs else None
+            
+            if matching_template and matching_source_doc:
+                status = "Matched Both Docs in Egnyte"
+            elif not matching_source_doc:
+                status = f"Did not match source for product code {row['product_code']}"
+            elif not matching_template:
+                doc_code = row['reg_doc_version_active_root'] or row['reg_doc_version_placebo_root']
+                status = f"did not match template {doc_code}"
+            else:
+                status = f"did not match to either source {row['product_code']} or template"
+            
+            status_report.append({
                 'row_index': idx,
                 'row_data': row.to_dict(),
-                'matching_templates': matching_templates,
-                'matching_source_docs': matching_source_docs,
-                'total_templates': len(matching_templates),
-                'total_source_docs': len(matching_source_docs)
-            }
-            matches.append(row_matches)
+                'matching_source_document': matching_source_doc,
+                'matching_template': matching_template,
+                'status': status
+            })
+            
+            # Add to latest version rows if it has matches
+            if matching_template or matching_source_doc:
+                latest_version_rows.append({
+                    'row_index': idx,
+                    'row_data': row.to_dict(),
+                    'matching_templates': matching_templates,
+                    'matching_source_docs': matching_source_docs,
+                    'total_templates': len(matching_templates),
+                    'total_source_docs': len(matching_source_docs)
+                })
             
             print(f"  Row {idx + 1} Summary: {len(matching_templates)} templates, {len(matching_source_docs)} source docs")
+            print(f"  Status: {status}")
+        
+        # Filter status report to only show "Matched Both Docs in Egnyte"
+        matched_status_report = [item for item in status_report if item['status'] == "Matched Both Docs in Egnyte"]
+        
+        # Create summary table of status reasons
+        status_counts = {}
+        for item in status_report:
+            status = item['status']
+            status_counts[status] = status_counts.get(status, 0) + 1
+        
+        summary_table = []
+        for status, count in status_counts.items():
+            summary_table.append({
+                'status': status,
+                'count': count,
+                'percentage': round((count / len(status_report)) * 100, 1)
+            })
         
         # Print overall summary
-        total_matches = sum(len(match['matching_templates']) + len(match['matching_source_docs']) for match in matches)
+        total_latest_matches = len(latest_version_rows)
+        total_matches = sum(len(match['matching_templates']) + len(match['matching_source_docs']) for match in latest_version_rows)
         print(f"\n=== OVERALL SUMMARY ===")
-        print(f"Total rows processed: {len(matches)}")
+        print(f"Total rows processed: {len(request_df)}")
+        print(f"Latest version rows with matches: {total_latest_matches}")
         print(f"Total matches found: {total_matches}")
+        print(f"Rows with 'Matched Both Docs in Egnyte': {len(matched_status_report)}")
+        
+        print(f"\n=== STATUS SUMMARY TABLE ===")
+        for summary in summary_table:
+            print(f"{summary['status']}: {summary['count']} rows ({summary['percentage']}%)")
         
         return jsonify({
             "status": "success", 
             "message": "Bulk request processed successfully",
             "data": {
-                "total_rows": len(matches),
+                "total_rows_processed": len(request_df),
+                "latest_version_rows_with_matches": total_latest_matches,
                 "unique_product_codes": unique_product_codes,
-                "matches": matches,
+                "matched_status_report": matched_status_report,
+                "status_summary_table": summary_table,
+                "latest_version_matches": latest_version_rows,
                 "timestamp": timestamp_clean
             }
         }), 200
