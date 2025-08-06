@@ -1840,26 +1840,28 @@ def reg_docs_bulk_request():
                 active_root_lower = active_root.lower() if active_root else ""
                 placebo_root_lower = placebo_root.lower() if placebo_root else ""
                 
-                # Check if template matches either active or placebo root
-                if active_root_lower in template_name or placebo_root_lower in template_name:
+                # More specific template matching - check for exact section match
+                template_matches = False
+                if active_root_lower and active_root_lower in template_name:
+                    template_matches = True
+                    print(f"  ✓ Template match (active): {template.get('name')} - matches {active_root_lower}")
+                elif placebo_root_lower and placebo_root_lower in template_name:
+                    template_matches = True
+                    print(f"  ✓ Template match (placebo): {template.get('name')} - matches {placebo_root_lower}")
+                
+                if template_matches:
                     matching_templates.append(template)
-                    print(f"  ✓ Template match: {template.get('name')}")
             
             # Find matching source documents
             matching_source_docs = []
             for source_doc in source_docs:
                 source_doc_name = source_doc.get('name', '').lower()
-                active_root = row['reg_doc_version_active_root']
-                placebo_root = row['reg_doc_version_placebo_root']
+                product_code = row['product_code'].lower()
                 
-                # Convert to lowercase only if not None
-                active_root_lower = active_root.lower() if active_root else ""
-                placebo_root_lower = placebo_root.lower() if placebo_root else ""
-                
-                # Check if source document matches either active or placebo root
-                if active_root_lower in source_doc_name or placebo_root_lower in source_doc_name:
+                # Check if source document matches the product code
+                if product_code in source_doc_name:
                     matching_source_docs.append(source_doc)
-                    print(f"  ✓ Source doc match: {source_doc.get('name')}")
+                    print(f"  ✓ Source doc match: {source_doc.get('name')} - matches product code {product_code}")
             
             # Determine status and add to report
             matching_template = matching_templates[0] if matching_templates else None
