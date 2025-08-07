@@ -2015,16 +2015,22 @@ def load_prompt_from_file():
 def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp'):
     """Download a file from Egnyte to a temporary file"""
     try:
+        logger.info(f"Attempting to download file {file_id} with extension {file_extension}")
+        
         # Download file content
         file_content = download_egnyte_file(access_token, file_id)
         if not file_content:
+            logger.error(f"download_egnyte_file returned None for file_id: {file_id}")
             return None
+        
+        logger.info(f"Successfully downloaded {len(file_content)} bytes for file_id: {file_id}")
         
         # Create temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
         temp_file.write(file_content)
         temp_file.close()
         
+        logger.info(f"Created temporary file: {temp_file.name}")
         return temp_file.name
     except Exception as e:
         logger.error(f"Error downloading file to temp: {e}")
@@ -2318,6 +2324,9 @@ def process_document_generation(matched_row):
         template_file = matched_row['matching_template']
         if not template_file:
             return {"error": "No template file found"}
+        
+        logger.info(f"Template file data: {template_file}")
+        logger.info(f"Template file entry_id: {template_file.get('entry_id')}")
         
         template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx')
         if not template_temp_path:
