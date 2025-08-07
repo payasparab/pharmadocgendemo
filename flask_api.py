@@ -1534,19 +1534,43 @@ def background_generate_egnyte_document(template_file_id, source_document_ids, m
 def download_egnyte_file(access_token, file_id):
     """Download a file from Egnyte and return its content"""
     try:
+        logger.info(f"Downloading Egnyte file: {file_id}")
         url = f"https://{DOMAIN}/pubapi/v1/fs-content/ids/file/{file_id}"
         headers = {
             "Authorization": f"Bearer {access_token}"
         }
         
-        rate_limit_delay()
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+        logger.info(f"Egnyte URL: {url}")
+        logger.info(f"Domain: {DOMAIN}")
+        logger.info(f"Access token length: {len(access_token) if access_token else 0}")
         
-        return response.content
+        rate_limit_delay()
+        logger.info("Making request to Egnyte API...")
+        response = requests.get(url, headers=headers)
+        
+        logger.info(f"Response status code: {response.status_code}")
+        logger.info(f"Response headers: {dict(response.headers)}")
+        
+        if response.status_code != 200:
+            logger.error(f"Egnyte API returned error status: {response.status_code}")
+            logger.error(f"Response text: {response.text}")
+            response.raise_for_status()
+        
+        content = response.content
+        logger.info(f"SUCCESS: Downloaded {len(content)} bytes from Egnyte")
+        
+        return content
         
     except Exception as e:
-        logger.error(f"Error downloading file {file_id}: {e}")
+        logger.error("=" * 50)
+        logger.error("EGNYTE FILE DOWNLOAD FAILED")
+        logger.error("=" * 50)
+        logger.error(f"File ID: {file_id}")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 50)
         return None
 
 def find_egnyte_target_folder(access_token, molecule_code, campaign_number):
@@ -2039,27 +2063,36 @@ def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp'):
 def process_template_with_openai(template_file_path):
     """Process template document using OpenAI Files API"""
     try:
+        logger.info(f"Starting template processing for: {template_file_path}")
+        
         client = initialize_openai()
         if not client:
+            logger.error("FAILED: Could not initialize OpenAI client")
             return None
+        logger.info("SUCCESS: OpenAI client initialized")
         
         # Upload the template file to OpenAI
+        logger.info("Uploading template file to OpenAI...")
         with open(template_file_path, 'rb') as file:
             response = client.files.create(
                 file=file,
                 purpose='assistants'
             )
             file_id = response.id
+        logger.info(f"SUCCESS: Template file uploaded to OpenAI with ID: {file_id}")
         
         # Create an assistant to process the template
+        logger.info("Creating OpenAI assistant for template processing...")
         assistant = client.beta.assistants.create(
             name="Template Processor",
             instructions="Extract the template structure and placeholders from this document",
             tools=[{"type": "retrieval"}],
             file_ids=[file_id]
         )
+        logger.info(f"SUCCESS: Assistant created with ID: {assistant.id}")
         
         # Create a thread and run
+        logger.info("Creating thread and running template analysis...")
         thread = client.beta.threads.create()
         message = client.beta.threads.messages.create(
             thread_id=thread.id,
@@ -2071,50 +2104,73 @@ def process_template_with_openai(template_file_path):
             thread_id=thread.id,
             assistant_id=assistant.id
         )
+        logger.info(f"SUCCESS: Run started with ID: {run.id}")
         
         # Wait for completion
+        logger.info("Waiting for template analysis to complete...")
         while run.status != 'completed':
             time.sleep(1)
             run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+            logger.info(f"Run status: {run.status}")
         
         # Get the response
+        logger.info("Retrieving template analysis results...")
         messages = client.beta.threads.messages.list(thread_id=thread.id)
         template_analysis = messages.data[0].content[0].text.value
+        logger.info(f"SUCCESS: Template analysis retrieved ({len(template_analysis)} characters)")
         
         # Clean up
+        logger.info("Cleaning up OpenAI resources...")
         client.files.delete(file_id)
         client.beta.assistants.delete(assistant.id)
+        logger.info("SUCCESS: OpenAI resources cleaned up")
         
         return template_analysis
         
     except Exception as e:
-        logger.error(f"Error processing template with OpenAI: {e}")
+        logger.error("=" * 50)
+        logger.error("TEMPLATE PROCESSING FAILED")
+        logger.error("=" * 50)
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 50)
         return None
 
 def extract_pdf_information_with_openai(pdf_file_path):
     """Extract information from PDF using OpenAI Files API"""
     try:
+        logger.info(f"Starting PDF information extraction for: {pdf_file_path}")
+        
         client = initialize_openai()
         if not client:
+            logger.error("FAILED: Could not initialize OpenAI client")
             return None
+        logger.info("SUCCESS: OpenAI client initialized")
         
         # Upload the PDF file to OpenAI
+        logger.info("Uploading PDF file to OpenAI...")
         with open(pdf_file_path, 'rb') as file:
             response = client.files.create(
                 file=file,
                 purpose='assistants'
             )
             file_id = response.id
+        logger.info(f"SUCCESS: PDF file uploaded to OpenAI with ID: {file_id}")
         
         # Create an assistant to extract information
+        logger.info("Creating OpenAI assistant for PDF information extraction...")
         assistant = client.beta.assistants.create(
             name="PDF Information Extractor",
             instructions="Extract all key information from this pharmaceutical product specification document including product details, composition data, and specifications. Return the information in a structured JSON format.",
             tools=[{"type": "retrieval"}],
             file_ids=[file_id]
         )
+        logger.info(f"SUCCESS: Assistant created with ID: {assistant.id}")
         
         # Create a thread and run
+        logger.info("Creating thread and running PDF information extraction...")
         thread = client.beta.threads.create()
         message = client.beta.threads.messages.create(
             thread_id=thread.id,
@@ -2126,24 +2182,38 @@ def extract_pdf_information_with_openai(pdf_file_path):
             thread_id=thread.id,
             assistant_id=assistant.id
         )
+        logger.info(f"SUCCESS: Run started with ID: {run.id}")
         
         # Wait for completion
+        logger.info("Waiting for PDF information extraction to complete...")
         while run.status != 'completed':
             time.sleep(1)
             run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+            logger.info(f"Run status: {run.status}")
         
         # Get the response
+        logger.info("Retrieving PDF information extraction results...")
         messages = client.beta.threads.messages.list(thread_id=thread.id)
         pdf_information = messages.data[0].content[0].text.value
+        logger.info(f"SUCCESS: PDF information extracted ({len(pdf_information)} characters)")
         
         # Clean up
+        logger.info("Cleaning up OpenAI resources...")
         client.files.delete(file_id)
         client.beta.assistants.delete(assistant.id)
+        logger.info("SUCCESS: OpenAI resources cleaned up")
         
         return pdf_information
         
     except Exception as e:
-        logger.error(f"Error extracting PDF information with OpenAI: {e}")
+        logger.error("=" * 50)
+        logger.error("PDF INFORMATION EXTRACTION FAILED")
+        logger.error("=" * 50)
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 50)
         return None
 
 def extract_row_data(row_data):
@@ -2167,11 +2237,16 @@ def extract_row_data(row_data):
 def generate_final_document_with_openai(prompt, template_analysis, pdf_information, row_data):
     """Generate final document using OpenAI API"""
     try:
+        logger.info("Starting final document generation with OpenAI...")
+        
         client = initialize_openai()
         if not client:
+            logger.error("FAILED: Could not initialize OpenAI client")
             return None
+        logger.info("SUCCESS: OpenAI client initialized")
         
         # Prepare the consolidated information
+        logger.info("Preparing consolidated information for document generation...")
         consolidated_info = f"""
 PROMPT:
 {prompt}
@@ -2196,8 +2271,10 @@ Based on the above information, generate a complete regulatory document in HTML 
 
 Return the document in clean HTML format with proper styling.
 """
+        logger.info(f"Consolidated information prepared ({len(consolidated_info)} characters)")
         
         # Call OpenAI API
+        logger.info("Calling OpenAI API for document generation...")
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -2209,10 +2286,20 @@ Return the document in clean HTML format with proper styling.
         )
         
         html_content = response.choices[0].message.content
+        logger.info(f"SUCCESS: Final document generated ({len(html_content)} characters)")
+        logger.info(f"OpenAI response usage: {response.usage}")
+        
         return html_content
         
     except Exception as e:
-        logger.error(f"Error generating final document with OpenAI: {e}")
+        logger.error("=" * 50)
+        logger.error("FINAL DOCUMENT GENERATION FAILED")
+        logger.error("=" * 50)
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 50)
         return None
 
 def convert_html_to_docx(html_content, output_path):
@@ -2310,60 +2397,101 @@ def upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, folder_i
 def process_document_generation(matched_row):
     """Main function to process document generation for a matched row"""
     try:
+        logger.info("=" * 80)
+        logger.info("STARTING DOCUMENT GENERATION PROCESS")
+        logger.info("=" * 80)
+        logger.info(f"Processing row: {matched_row.get('row_index')}")
+        logger.info(f"Product code: {matched_row.get('row_data', {}).get('product_code')}")
+        logger.info(f"Section: {matched_row.get('row_data', {}).get('section')}")
+        
         # Get Egnyte access token
+        logger.info("Step 1: Getting Egnyte access token...")
         access_token = get_egnyte_token()
         if not access_token:
+            logger.error("FAILED: Could not get Egnyte access token")
             return {"error": "Failed to get Egnyte access token"}
+        logger.info("SUCCESS: Egnyte access token obtained")
         
         # Step 2: Load prompt
+        logger.info("Step 2: Loading prompt from demo_prompt.py...")
         prompt = load_prompt_from_file()
         if not prompt:
+            logger.error("FAILED: Could not load prompt from demo_prompt.py")
             return {"error": "Failed to load prompt"}
+        logger.info(f"SUCCESS: Prompt loaded ({len(prompt)} characters)")
         
         # Step 3: Process template
+        logger.info("Step 3: Processing template file...")
         template_file = matched_row['matching_template']
         if not template_file:
+            logger.error("FAILED: No template file found in matched_row")
             return {"error": "No template file found"}
         
         logger.info(f"Template file data: {template_file}")
         logger.info(f"Template file entry_id: {template_file.get('entry_id')}")
+        logger.info(f"Template file name: {template_file.get('name')}")
         
         template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx')
         if not template_temp_path:
+            logger.error("FAILED: Could not download template file to temp location")
             return {"error": "Failed to download template file"}
+        logger.info(f"SUCCESS: Template downloaded to {template_temp_path}")
         
+        logger.info("Processing template with OpenAI...")
         template_analysis = process_template_with_openai(template_temp_path)
         os.unlink(template_temp_path)  # Clean up temp file
+        logger.info("Cleaned up template temp file")
         
         if not template_analysis:
+            logger.error("FAILED: Could not process template with OpenAI")
             return {"error": "Failed to process template"}
+        logger.info(f"SUCCESS: Template analysis completed ({len(template_analysis)} characters)")
         
         # Step 4: Process source document
+        logger.info("Step 4: Processing source document...")
         source_file = matched_row['matching_source_document']
         if not source_file:
+            logger.error("FAILED: No source document found in matched_row")
             return {"error": "No source document found"}
+        
+        logger.info(f"Source file data: {source_file}")
+        logger.info(f"Source file entry_id: {source_file.get('entry_id')}")
+        logger.info(f"Source file name: {source_file.get('name')}")
         
         source_temp_path = download_egnyte_file_to_temp(access_token, source_file['entry_id'], '.pdf')
         if not source_temp_path:
+            logger.error("FAILED: Could not download source document to temp location")
             return {"error": "Failed to download source document"}
+        logger.info(f"SUCCESS: Source document downloaded to {source_temp_path}")
         
+        logger.info("Extracting PDF information with OpenAI...")
         pdf_information = extract_pdf_information_with_openai(source_temp_path)
         os.unlink(source_temp_path)  # Clean up temp file
+        logger.info("Cleaned up source document temp file")
         
         if not pdf_information:
+            logger.error("FAILED: Could not extract PDF information with OpenAI")
             return {"error": "Failed to extract PDF information"}
+        logger.info(f"SUCCESS: PDF information extracted ({len(pdf_information)} characters)")
         
         # Step 5: Extract row data
+        logger.info("Step 5: Extracting row data...")
         row_data = extract_row_data(matched_row['row_data'])
         if not row_data:
+            logger.error("FAILED: Could not extract row data")
             return {"error": "Failed to extract row data"}
+        logger.info(f"SUCCESS: Row data extracted: {row_data}")
         
         # Step 6: Generate final document
+        logger.info("Step 6: Generating final document with OpenAI...")
         html_content = generate_final_document_with_openai(prompt, template_analysis, pdf_information, row_data)
         if not html_content:
+            logger.error("FAILED: Could not generate final document with OpenAI")
             return {"error": "Failed to generate final document"}
+        logger.info(f"SUCCESS: Final document generated ({len(html_content)} characters)")
         
         # Create output files
+        logger.info("Step 7: Creating output files...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         product_code = row_data['product_code']
         docx_filename = f"{product_code}_regulatory_doc_{timestamp}.docx"
@@ -2372,23 +2500,45 @@ def process_document_generation(matched_row):
         docx_path = os.path.join(tempfile.gettempdir(), docx_filename)
         pdf_path = os.path.join(tempfile.gettempdir(), pdf_filename)
         
-        # Convert to DOCX and PDF
-        docx_success = convert_html_to_docx(html_content, docx_path)
-        pdf_success = convert_html_to_pdf(html_content, pdf_path)
+        logger.info(f"DOCX path: {docx_path}")
+        logger.info(f"PDF path: {pdf_path}")
         
-        if not docx_success or not pdf_success:
-            return {"error": "Failed to convert to DOCX or PDF"}
+        # Convert to DOCX and PDF
+        logger.info("Converting HTML to DOCX...")
+        docx_success = convert_html_to_docx(html_content, docx_path)
+        if not docx_success:
+            logger.error("FAILED: Could not convert HTML to DOCX")
+            return {"error": "Failed to convert to DOCX"}
+        logger.info("SUCCESS: HTML converted to DOCX")
+        
+        logger.info("Converting HTML to PDF...")
+        pdf_success = convert_html_to_pdf(html_content, pdf_path)
+        if not pdf_success:
+            logger.error("FAILED: Could not convert HTML to PDF")
+            return {"error": "Failed to convert to PDF"}
+        logger.info("SUCCESS: HTML converted to PDF")
         
         # Upload to Egnyte
+        logger.info("Step 8: Uploading files to Egnyte...")
         target_folder_id = "4a85f5e6-bb31-4bd1-b011-6fc75bdcb2d7"
+        logger.info(f"Target folder ID: {target_folder_id}")
+        
         upload_result = upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, target_folder_id)
         
         # Clean up temp files
+        logger.info("Cleaning up temporary files...")
         os.unlink(docx_path)
         os.unlink(pdf_path)
+        logger.info("Temporary files cleaned up")
         
         if not upload_result:
+            logger.error("FAILED: Could not upload files to Egnyte")
             return {"error": "Failed to upload files to Egnyte"}
+        
+        logger.info(f"SUCCESS: Files uploaded to Egnyte - {upload_result}")
+        logger.info("=" * 80)
+        logger.info("DOCUMENT GENERATION PROCESS COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
         
         return {
             "success": True,
@@ -2398,7 +2548,15 @@ def process_document_generation(matched_row):
         }
         
     except Exception as e:
-        logger.error(f"Error in process_document_generation: {e}")
+        logger.error("=" * 80)
+        logger.error("DOCUMENT GENERATION PROCESS FAILED")
+        logger.error("=" * 80)
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        logger.error(f"Error details: {e}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 80)
         return {"error": str(e)}
 
 
