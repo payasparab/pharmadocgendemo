@@ -1812,21 +1812,29 @@ def reg_docs_bulk_request():
         
         # Get templates from Egnyte
         templates_folder_id = "966281ab-54c3-47ea-b20f-b38ed2ef9b30"
+        logger.info(f"Fetching templates from folder ID: {templates_folder_id}")
         templates_data = list_egnyte_folder_contents(access_token, templates_folder_id)
         if not templates_data:
+            logger.error("FAILED: Could not list templates folder contents")
             return jsonify({"error": "Failed to list templates folder contents"}), 500
         
         templates = templates_data.get("files", [])
-        print(f"Found {len(templates)} templates in Egnyte")
+        logger.info(f"Found {len(templates)} templates in Egnyte")
+        for i, template in enumerate(templates[:10]):  # Log first 10 templates
+            logger.info(f"Template {i+1}: {template.get('name')} (ID: {template.get('entry_id')})")
         
         # Get source documents from Egnyte
         source_docs_folder_id = "56545792-6b5d-4fc3-8e78-31d401bd7088"
+        logger.info(f"Fetching source documents from folder ID: {source_docs_folder_id}")
         source_docs_data = list_egnyte_folder_contents(access_token, source_docs_folder_id)
         if not source_docs_data:
+            logger.error("FAILED: Could not list source documents folder contents")
             return jsonify({"error": "Failed to list source documents folder contents"}), 500
         
         source_docs = source_docs_data.get("files", [])
-        print(f"Found {len(source_docs)} source documents in Egnyte")
+        logger.info(f"Found {len(source_docs)} source documents in Egnyte")
+        for i, doc in enumerate(source_docs[:10]):  # Log first 10 source docs
+            logger.info(f"Source doc {i+1}: {doc.get('name')} (ID: {doc.get('entry_id')})")
         
         # Filter to only latest versions and process each request row
         latest_version_rows = []
@@ -1858,6 +1866,8 @@ def reg_docs_bulk_request():
             
             # Find matching templates
             matching_templates = []
+            logger.info(f"Looking for templates matching active_root: '{row['reg_doc_version_active_root']}' or placebo_root: '{row['reg_doc_version_placebo_root']}'")
+            
             for template in templates:
                 template_name = template.get('name', '').lower()
                 active_root = row['reg_doc_version_active_root']
@@ -1867,28 +1877,43 @@ def reg_docs_bulk_request():
                 active_root_lower = active_root.lower() if active_root else ""
                 placebo_root_lower = placebo_root.lower() if placebo_root else ""
                 
+                logger.info(f"Checking template: '{template.get('name')}' (ID: {template.get('entry_id')})")
+                logger.info(f"  Template name (lower): '{template_name}'")
+                logger.info(f"  Active root (lower): '{active_root_lower}'")
+                logger.info(f"  Placebo root (lower): '{placebo_root_lower}'")
+                
                 # More specific template matching - check for exact section match
                 template_matches = False
                 if active_root_lower and active_root_lower in template_name:
                     template_matches = True
-                    print(f"  ✓ Template match (active): {template.get('name')} - matches {active_root_lower}")
+                    logger.info(f"  ✓ Template match (active): {template.get('name')} - matches {active_root_lower}")
                 elif placebo_root_lower and placebo_root_lower in template_name:
                     template_matches = True
-                    print(f"  ✓ Template match (placebo): {template.get('name')} - matches {placebo_root_lower}")
+                    logger.info(f"  ✓ Template match (placebo): {template.get('name')} - matches {placebo_root_lower}")
+                else:
+                    logger.info(f"  ✗ No match for template: {template.get('name')}")
                 
                 if template_matches:
                     matching_templates.append(template)
             
             # Find matching source documents
             matching_source_docs = []
+            logger.info(f"Looking for source documents matching product_code: '{row['product_code']}'")
+            
             for source_doc in source_docs:
                 source_doc_name = source_doc.get('name', '').lower()
                 product_code = row['product_code'].lower()
                 
+                logger.info(f"Checking source doc: '{source_doc.get('name')}' (ID: {source_doc.get('entry_id')})")
+                logger.info(f"  Source doc name (lower): '{source_doc_name}'")
+                logger.info(f"  Product code (lower): '{product_code}'")
+                
                 # Check if source document matches the product code
                 if product_code in source_doc_name:
                     matching_source_docs.append(source_doc)
-                    print(f"  ✓ Source doc match: {source_doc.get('name')} - matches product code {product_code}")
+                    logger.info(f"  ✓ Source doc match: {source_doc.get('name')} - matches product code {product_code}")
+                else:
+                    logger.info(f"  ✗ No match for source doc: {source_doc.get('name')}")
             
             # Determine status and add to report
             matching_template = matching_templates[0] if matching_templates else None
@@ -2430,6 +2455,10 @@ def process_document_generation(matched_row):
         logger.info(f"Template file data: {template_file}")
         logger.info(f"Template file entry_id: {template_file.get('entry_id')}")
         logger.info(f"Template file name: {template_file.get('name')}")
+        logger.info(f"Template file path: {template_file.get('path')}")
+        logger.info(f"Template file type: {template_file.get('type')}")
+        logger.info(f"Template file size: {template_file.get('size')}")
+        logger.info(f"Template file last_modified: {template_file.get('last_modified')}")
         
         template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx')
         if not template_temp_path:
