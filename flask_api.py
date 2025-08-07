@@ -1531,24 +1531,52 @@ def background_generate_egnyte_document(template_file_id, source_document_ids, m
             "completed_at": datetime.now().isoformat()
         }
 
-def download_egnyte_file(access_token, file_id):
+def download_egnyte_file(access_token, file_id, file_path=None):
     """Download a file from Egnyte and return its content"""
     try:
         logger.info(f"Downloading Egnyte file: {file_id}")
+        
+        # Try path-based download first if path is available
+        if file_path:
+            logger.info(f"Attempting path-based download: {file_path}")
+            url = f"https://{DOMAIN}/pubapi/v1/fs-content{file_path}"
+            headers = {
+                "Authorization": f"Bearer {access_token}"
+            }
+            
+            logger.info(f"Egnyte URL (path-based): {url}")
+            logger.info(f"Domain: {DOMAIN}")
+            logger.info(f"Access token length: {len(access_token) if access_token else 0}")
+            
+            rate_limit_delay()
+            logger.info("Making path-based request to Egnyte API...")
+            response = requests.get(url, headers=headers)
+            
+            logger.info(f"Path-based response status code: {response.status_code}")
+            
+            if response.status_code == 200:
+                content = response.content
+                logger.info(f"SUCCESS: Downloaded {len(content)} bytes from Egnyte (path-based)")
+                return content
+            else:
+                logger.warning(f"Path-based download failed with status {response.status_code}, trying ID-based download...")
+        
+        # Fall back to ID-based download
+        logger.info(f"Attempting ID-based download: {file_id}")
         url = f"https://{DOMAIN}/pubapi/v1/fs-content/ids/file/{file_id}"
         headers = {
             "Authorization": f"Bearer {access_token}"
         }
         
-        logger.info(f"Egnyte URL: {url}")
+        logger.info(f"Egnyte URL (ID-based): {url}")
         logger.info(f"Domain: {DOMAIN}")
         logger.info(f"Access token length: {len(access_token) if access_token else 0}")
         
         rate_limit_delay()
-        logger.info("Making request to Egnyte API...")
+        logger.info("Making ID-based request to Egnyte API...")
         response = requests.get(url, headers=headers)
         
-        logger.info(f"Response status code: {response.status_code}")
+        logger.info(f"ID-based response status code: {response.status_code}")
         logger.info(f"Response headers: {dict(response.headers)}")
         
         if response.status_code != 200:
@@ -1557,7 +1585,7 @@ def download_egnyte_file(access_token, file_id):
             response.raise_for_status()
         
         content = response.content
-        logger.info(f"SUCCESS: Downloaded {len(content)} bytes from Egnyte")
+        logger.info(f"SUCCESS: Downloaded {len(content)} bytes from Egnyte (ID-based)")
         
         return content
         
@@ -1566,6 +1594,7 @@ def download_egnyte_file(access_token, file_id):
         logger.error("EGNYTE FILE DOWNLOAD FAILED")
         logger.error("=" * 50)
         logger.error(f"File ID: {file_id}")
+        logger.error(f"File Path: {file_path}")
         logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Error message: {str(e)}")
         import traceback
@@ -2095,13 +2124,15 @@ def load_prompt_from_file():
         logger.error(f"Error loading prompt: {e}")
         return None
 
-def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp'):
+def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp', file_path=None):
     """Download a file from Egnyte to a temporary file"""
     try:
         logger.info(f"Attempting to download file {file_id} with extension {file_extension}")
+        if file_path:
+            logger.info(f"File path available: {file_path}")
         
         # Download file content
-        file_content = download_egnyte_file(access_token, file_id)
+        file_content = download_egnyte_file(access_token, file_id, file_path)
         if not file_content:
             logger.error(f"download_egnyte_file returned None for file_id: {file_id}")
             return None
@@ -2494,7 +2525,7 @@ def process_document_generation(matched_row):
         logger.info(f"Template file size: {template_file.get('size')}")
         logger.info(f"Template file last_modified: {template_file.get('last_modified')}")
         
-        template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx')
+        template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx', template_file.get('path'))
         if not template_temp_path:
             logger.error("FAILED: Could not download template file to temp location")
             return {"error": "Failed to download template file"}
@@ -2521,7 +2552,7 @@ def process_document_generation(matched_row):
         logger.info(f"Source file entry_id: {source_file.get('entry_id')}")
         logger.info(f"Source file name: {source_file.get('name')}")
         
-        source_temp_path = download_egnyte_file_to_temp(access_token, source_file['entry_id'], '.pdf')
+        source_temp_path = download_egnyte_file_to_temp(access_token, source_file['entry_id'], '.pdf', source_file.get('path'))
         if not source_temp_path:
             logger.error("FAILED: Could not download source document to temp location")
             return {"error": "Failed to download source document"}
