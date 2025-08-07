@@ -1919,6 +1919,23 @@ def reg_docs_bulk_request():
             matching_template = matching_templates[0] if matching_templates else None
             matching_source_doc = matching_source_docs[0] if matching_source_docs else None
             
+            # Debug the matched files
+            if matching_template:
+                logger.info(f"MATCHED TEMPLATE DETAILS:")
+                logger.info(f"  Name: {matching_template.get('name')}")
+                logger.info(f"  Entry ID: {matching_template.get('entry_id')}")
+                logger.info(f"  Path: {matching_template.get('path')}")
+                logger.info(f"  Type: {matching_template.get('type')}")
+                logger.info(f"  Size: {matching_template.get('size')}")
+            
+            if matching_source_doc:
+                logger.info(f"MATCHED SOURCE DOC DETAILS:")
+                logger.info(f"  Name: {matching_source_doc.get('name')}")
+                logger.info(f"  Entry ID: {matching_source_doc.get('entry_id')}")
+                logger.info(f"  Path: {matching_source_doc.get('path')}")
+                logger.info(f"  Type: {matching_source_doc.get('type')}")
+                logger.info(f"  Size: {matching_source_doc.get('size')}")
+            
             if matching_template and matching_source_doc:
                 status = "Matched Both Docs in Egnyte"
             elif not matching_source_doc:
@@ -1986,6 +2003,23 @@ def reg_docs_bulk_request():
         generated_docs_urls = []
         
         for matched_row in matched_status_report:
+            logger.info("=" * 80)
+            logger.info("PROCESSING MATCHED ROW FOR DOCUMENT GENERATION")
+            logger.info("=" * 80)
+            logger.info(f"Row index: {matched_row['row_index']}")
+            logger.info(f"Product code: {matched_row['row_data']['product_code']}")
+            logger.info(f"Status: {matched_row['status']}")
+            
+            if matched_row['matching_template']:
+                logger.info(f"Template to use: {matched_row['matching_template'].get('name')} (ID: {matched_row['matching_template'].get('entry_id')})")
+            else:
+                logger.info("No template found!")
+                
+            if matched_row['matching_source_document']:
+                logger.info(f"Source doc to use: {matched_row['matching_source_document'].get('name')} (ID: {matched_row['matching_source_document'].get('entry_id')})")
+            else:
+                logger.info("No source document found!")
+            
             generation_result = process_document_generation(matched_row)
             
             # Extract URLs if generation was successful
