@@ -2578,32 +2578,6 @@ def convert_html_to_docx(html_content, output_path):
         logger.error(f"Error converting HTML to DOCX: {e}")
         return False
 
-def convert_html_to_pdf(html_content, output_path):
-    """Convert HTML content to PDF format"""
-    try:
-        from weasyprint import HTML, CSS
-        from weasyprint.text.fonts import FontConfiguration
-        
-        # Configure fonts
-        font_config = FontConfiguration()
-        
-        # Create PDF from HTML
-        html_doc = HTML(string=html_content)
-        css = CSS(string='''
-            body { font-family: Arial, sans-serif; font-size: 12pt; }
-            h1, h2, h3, h4, h5, h6 { color: #333; }
-            table { border-collapse: collapse; width: 100%; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background-color: #f2f2f2; }
-        ''', font_config=font_config)
-        
-        html_doc.write_pdf(output_path, stylesheets=[css], font_config=font_config)
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error converting HTML to PDF: {e}")
-        return False
-
 def upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, folder_id):
     """Upload generated files to Egnyte"""
     try:
