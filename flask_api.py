@@ -163,10 +163,17 @@ def get_egnyte_token():
                 except (ValueError, IndexError):
                     retry_seconds = 30
                 
-                logger.warning(f"⚠️ Rate limit hit! Waiting {retry_seconds} seconds before retry {retry_count + 1}/{max_retries}")
+                logger.warning(f"⚠️ Rate limit hit! Retry-After: {retry_seconds} seconds")
                 logger.warning(f"   Retry-After header: {retry_after}")
                 
-                # Wait for the specified time
+                # If retry time is too long (>60 seconds), fail immediately to avoid worker timeout
+                if retry_seconds > 60:
+                    logger.error(f"❌ Rate limit retry time ({retry_seconds}s) exceeds worker timeout. Failing immediately.")
+                    logger.error("💡 Consider implementing background job processing for bulk requests.")
+                    return None
+                
+                # Only wait for short delays
+                logger.warning(f"⚠️ Waiting {retry_seconds} seconds before retry {retry_count + 1}/{max_retries}")
                 time.sleep(retry_seconds)
                 retry_count += 1
                 continue
@@ -1772,6 +1779,175 @@ def egnyte_clear_cache():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/test-openai-only', methods=['POST'])
+def test_openai_only():
+    """Test OpenAI components without Egnyte - for development/testing"""
+    try:
+        logger.info("=" * 80)
+        logger.info("TESTING OPENAI COMPONENTS (NO EGNYTE)")
+        logger.info("=" * 80)
+        
+        data = request.get_json()
+        if not data:
+            data = {}  # Allow empty request for default testing
+        
+        test_type = data.get('test_type', 'template')  # 'template', 'pdf', or 'both'
+        
+        results = {}
+        
+        # Test 1: Template Processing
+        if test_type in ['template', 'both']:
+            logger.info("Testing template processing with OpenAI...")
+            
+            # Create a mock template file for testing
+            mock_template_content = """
+            PHARMACEUTICAL PRODUCT SPECIFICATION
+            
+            Product Code: {{PRODUCT_CODE}}
+            Product Name: {{PRODUCT_NAME}}
+            Dosage Form: {{DOSAGE_FORM}}
+            
+            Composition:
+            {{COMPOSITION_TABLE}}
+            
+            Manufacturing Information:
+            Manufacturer: {{MANUFACTURER}}
+            Lot Number: {{LOT_NUMBER}}
+            Manufacturing Date: {{MFG_DATE}}
+            
+            Specifications:
+            {{SPECIFICATIONS}}
+            
+            This is a template document with placeholders that need to be filled.
+            """
+            
+            # Create temporary template file
+            temp_template = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            temp_template.write(mock_template_content)
+            temp_template.close()
+            
+            try:
+                template_analysis = process_template_with_openai(temp_template.name)
+                if template_analysis:
+                    results['template_processing'] = {
+                        'status': 'success',
+                        'analysis_length': len(template_analysis),
+                        'analysis_preview': template_analysis[:200] + "..." if len(template_analysis) > 200 else template_analysis
+                    }
+                    logger.info(f"✅ Template processing successful: {len(template_analysis)} characters")
+                else:
+                    results['template_processing'] = {
+                        'status': 'failed',
+                        'error': 'process_template_with_openai returned None'
+                    }
+                    logger.error("❌ Template processing failed")
+            except Exception as e:
+                results['template_processing'] = {
+                    'status': 'error',
+                    'error': str(e)
+                }
+                logger.error(f"❌ Template processing error: {e}")
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_template.name):
+                    os.unlink(temp_template.name)
+        
+        # Test 2: PDF Processing  
+        if test_type in ['pdf', 'both']:
+            logger.info("Testing PDF processing with OpenAI...")
+            
+            # Create a mock PDF content for testing
+            mock_pdf_content = """
+            PRODUCT SPECIFICATION DOCUMENT
+            
+            Product Code: THPG001009
+            Product Name: Test Pharmaceutical Product
+            Dosage Form: Immediate-release film-coated tablet
+            
+            Active Ingredients:
+            - Component A: 50mg
+            - Component B: 25mg
+            - Component C: 10mg
+            
+            Excipients:
+            - Microcrystalline cellulose
+            - Lactose monohydrate
+            - Magnesium stearate
+            
+            Manufacturing Specifications:
+            - Hardness: 4-8 kp
+            - Friability: NMT 1.0%
+            - Disintegration: NMT 30 minutes
+            
+            Quality Control:
+            - Assay: 95.0-105.0%
+            - Content uniformity: Meets USP requirements
+            """
+            
+            # Create temporary PDF-like file (text file for testing)
+            temp_pdf = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            temp_pdf.write(mock_pdf_content)
+            temp_pdf.close()
+            
+            try:
+                pdf_analysis = extract_pdf_information_with_openai(temp_pdf.name)
+                if pdf_analysis:
+                    results['pdf_processing'] = {
+                        'status': 'success',
+                        'analysis_length': len(pdf_analysis),
+                        'analysis_preview': pdf_analysis[:200] + "..." if len(pdf_analysis) > 200 else pdf_analysis
+                    }
+                    logger.info(f"✅ PDF processing successful: {len(pdf_analysis)} characters")
+                else:
+                    results['pdf_processing'] = {
+                        'status': 'failed',
+                        'error': 'extract_pdf_information_with_openai returned None'
+                    }
+                    logger.error("❌ PDF processing failed")
+            except Exception as e:
+                results['pdf_processing'] = {
+                    'status': 'error',
+                    'error': str(e)
+                }
+                logger.error(f"❌ PDF processing error: {e}")
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_pdf.name):
+                    os.unlink(temp_pdf.name)
+        
+        # Summary
+        total_tests = len([k for k in results.keys() if not k.endswith('_summary')])
+        successful_tests = len([v for v in results.values() if isinstance(v, dict) and v.get('status') == 'success'])
+        
+        logger.info("=" * 80)
+        logger.info(f"OPENAI TESTING COMPLETE: {successful_tests}/{total_tests} tests passed")
+        logger.info("=" * 80)
+        
+        return jsonify({
+            "status": "completed",
+            "message": f"OpenAI testing completed: {successful_tests}/{total_tests} tests passed",
+            "test_type": test_type,
+            "results": results,
+            "summary": {
+                "total_tests": total_tests,
+                "successful_tests": successful_tests,
+                "success_rate": f"{(successful_tests/total_tests)*100:.1f}%" if total_tests > 0 else "0%"
+            }
+        })
+        
+    except Exception as e:
+        logger.error("=" * 80)
+        logger.error("OPENAI TESTING FAILED")
+        logger.error("=" * 80)
+        logger.error(f"Error: {e}")
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        
+        return jsonify({
+            "status": "error",
+            "message": "OpenAI testing failed",
+            "error": str(e)
+        }), 500
 
 @app.route('/reg-docs-bulk-request', methods=['POST'])
 def reg_docs_bulk_request():
@@ -1837,7 +2013,12 @@ def reg_docs_bulk_request():
         # Get Egnyte access token
         access_token = get_egnyte_token()
         if not access_token:
-            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+            return jsonify({
+                "status": "error",
+                "message": "Failed to get Egnyte access token due to rate limiting. Please try again later.",
+                "error_code": "EGNYTE_RATE_LIMIT",
+                "retry_suggestion": "Wait 10-15 minutes before retrying bulk requests"
+            }), 429  # 429 = Too Many Requests
         
         # Get templates from Egnyte
         templates_folder_id = "966281ab-54c3-47ea-b20f-b38ed2ef9b30"
@@ -2474,8 +2655,8 @@ def process_document_generation(matched_row):
         logger.info("Step 1: Getting Egnyte access token...")
         access_token = get_egnyte_token()
         if not access_token:
-            logger.error("FAILED: Could not get Egnyte access token")
-            return {"error": "Failed to get Egnyte access token"}
+            logger.error("FAILED: Could not get Egnyte access token due to rate limiting")
+            return {"error": "Failed to get Egnyte access token - rate limit exceeded. Please try again in 10-15 minutes."}
         logger.info("SUCCESS: Egnyte access token obtained")
         
         # Step 2: Load prompt
