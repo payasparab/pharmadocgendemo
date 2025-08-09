@@ -2171,12 +2171,26 @@ def process_template_with_openai(template_file_path):
             file_id = response.id
         logger.info(f"SUCCESS: Template file uploaded to OpenAI with ID: {file_id}")
         
+        # Create a vector store for the template file
+        logger.info("Creating vector store for template file...")
+        vector_store = client.beta.vector_stores.create(
+            name=f"Template Vector Store {file_id}",
+            file_ids=[file_id]
+        )
+        logger.info(f"SUCCESS: Vector store created with ID: {vector_store.id}")
+        
         # Create an assistant to process the template
         logger.info("Creating OpenAI assistant for template processing...")
         assistant = client.beta.assistants.create(
             name="Template Processor",
             instructions="Extract the template structure and placeholders from this document",
-            tools=[{"type": "file_search"}]
+            model="gpt-4o",
+            tools=[{"type": "file_search"}],
+            tool_resources={
+                "file_search": {
+                    "vector_store_ids": [vector_store.id]
+                }
+            }
         )
         logger.info(f"SUCCESS: Assistant created with ID: {assistant.id}")
         
@@ -2186,13 +2200,7 @@ def process_template_with_openai(template_file_path):
         message = client.beta.threads.messages.create(
             thread_id=thread.id,
             role="user",
-            content="Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled.",
-            attachments=[
-                {
-                    "file_id": file_id,
-                    "tools": [{"type": "file_search"}]
-                }
-            ]
+            content="Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled."
         )
         
         run = client.beta.threads.runs.create(
