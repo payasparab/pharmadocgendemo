@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Test script for OpenAI components without Egnyte dependencies
-Run this to test your OpenAI Responses API implementation locally
+Test script for the new simplified document generation function
+Tests the upload_files_prompt_to_openai function with local files
 """
 
 import requests
@@ -88,89 +88,130 @@ def check_openai_config():
         print(f"OpenAI client error: {e}")
         return False
 
-def test_openai_components(test_type="template"):
-    """
-    Test OpenAI components
-    
-    Args:
-        test_type: 'template', 'pdf', or 'both'
-    """
+def check_test_files():
+    """Check if required test files exist"""
     print("=" * 60)
-    print(f"TESTING OPENAI COMPONENTS: {test_type.upper()}")
+    print("TEST FILES CHECK")
     print("=" * 60)
     
-    url = f"{BASE_URL}/test-openai-only"
+    # Check if we're in the right directory
+    current_dir = os.getcwd()
+    print(f"Current directory: {current_dir}")
     
-    payload = {
-        "test_type": test_type
-    }
+    # Test files
+    template_file = "IND_3.2.P.1_Template.docx"
+    source_file = "THPG001009 Product Code.pdf"
+    
+    files_exist = True
+    
+    # Check template file
+    if os.path.exists(template_file):
+        size = os.path.getsize(template_file)
+        print(f"✅ Template file found: {template_file} ({size} bytes)")
+    else:
+        print(f"❌ Template file missing: {template_file}")
+        files_exist = False
+    
+    # Check source file
+    if os.path.exists(source_file):
+        size = os.path.getsize(source_file)
+        print(f"✅ Source file found: {source_file} ({size} bytes)")
+    else:
+        print(f"❌ Source file missing: {source_file}")
+        files_exist = False
+    
+    return files_exist
+
+def test_document_generation():
+    """Test the new simplified document generation function"""
+    print("=" * 60)
+    print("TESTING SIMPLIFIED DOCUMENT GENERATION")
+    print("=" * 60)
+    
+    url = f"{BASE_URL}/test-document-generation"
     
     try:
         print(f"Making request to: {url}")
-        print(f"Payload: {json.dumps(payload, indent=2)}")
+        print("This will test the new upload_files_prompt_to_openai function")
+        print("Using files: IND_3.2.P.1_Template.docx and THPG001009 Product Code.pdf")
         
         start_time = time.time()
-        response = requests.post(url, json=payload, timeout=120)  # 2 minute timeout
+        response = requests.post(url, timeout=300)  # 5 minute timeout for document generation
         end_time = time.time()
         
-        print(f"Request took: {end_time - start_time:.2f} seconds")
+        request_time = end_time - start_time
+        print(f"Request took: {request_time:.2f} seconds")
         print(f"Response Status: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            print("SUCCESS!")
+            print("✅ SUCCESS!")
             print(f"Message: {result.get('message', 'No message')}")
             
-            # Print summary
-            summary = result.get('summary', {})
-            print(f"Summary:")
-            print(f"  Total Tests: {summary.get('total_tests', 0)}")
-            print(f"  Successful: {summary.get('successful_tests', 0)}")
-            print(f"  Success Rate: {summary.get('success_rate', '0%')}")
-            
             # Print detailed results
-            results = result.get('results', {})
-            all_tests_passed = True
+            print(f"\nDETAILED RESULTS:")
+            print(f"  Processing time: {result.get('processing_time_seconds', 0):.2f} seconds")
+            print(f"  Document size: {result.get('document_size_bytes', 0)} bytes")
+            print(f"  Output filename: {result.get('output_filename', 'Unknown')}")
             
-            for test_name, test_result in results.items():
-                status = test_result.get('status', 'unknown')
-                print(f"\n{test_name.upper()}:")
-                print(f"  Status: {status}")
-                
-                if status == 'success':
-                    print(f"  Length: {test_result.get('analysis_length', 0)} characters")
-                    preview = test_result.get('analysis_preview', '')
-                    if preview:
-                        print(f"  Preview: {preview[:100]}...")
-                elif status == 'failed':
-                    print(f"  Error: {test_result.get('error', 'Unknown error')}")
-                    all_tests_passed = False
-                elif status == 'error':
-                    print(f"  Exception: {test_result.get('error', 'Unknown exception')}")
-                    all_tests_passed = False
+            details = result.get('details', {})
+            print(f"  Template file: {details.get('template_file', 'Unknown')}")
+            print(f"  Source document: {details.get('source_document', 'Unknown')}")
+            print(f"  Prompt length: {details.get('prompt_length', 0)} characters")
             
-            # Only return True if ALL tests actually passed
-            return all_tests_passed
+            # Check if output file was created
+            output_filename = result.get('output_filename')
+            if output_filename and os.path.exists(output_filename):
+                file_size = os.path.getsize(output_filename)
+                print(f"  ✅ Generated file exists: {output_filename} ({file_size} bytes)")
+            else:
+                print(f"  ⚠️ Generated file not found: {output_filename}")
+            
+            return True
             
         else:
-            print(f"FAILED!")
+            print(f"❌ FAILED!")
             print(f"Response: {response.text}")
+            
+            # Try to parse error response
+            try:
+                error_result = response.json()
+                print(f"Error message: {error_result.get('message', 'Unknown error')}")
+                if 'error' in error_result:
+                    print(f"Error details: {error_result['error']}")
+            except:
+                pass
+            
             return False
             
+    except requests.exceptions.Timeout:
+        print("❌ REQUEST TIMEOUT")
+        print("The request took too long (>5 minutes). This might indicate:")
+        print("1. OpenAI API is slow")
+        print("2. Large files are being processed")
+        print("3. Network issues")
+        return False
+    except requests.exceptions.ConnectionError:
+        print("❌ CONNECTION ERROR")
+        print("Could not connect to the Flask server. Make sure:")
+        print("1. The Flask server is running: python flask_api.py")
+        print("2. The server is accessible at the correct URL")
+        print("3. No firewall is blocking the connection")
+        return False
     except requests.exceptions.RequestException as e:
-        print(f"REQUEST ERROR: {e}")
+        print(f"❌ REQUEST ERROR: {e}")
         return False
     except Exception as e:
-        print(f"UNEXPECTED ERROR: {e}")
+        print(f"❌ UNEXPECTED ERROR: {e}")
         return False
 
 def main():
-    """Run all tests"""
-    print("Starting OpenAI Component Testing...")
-    print("This will test your new Responses API implementation without Egnyte")
+    """Run the complete test suite"""
+    print("Starting Simplified Document Generation Testing...")
+    print("This will test the new upload_files_prompt_to_openai function")
     print()
     
-    # First, check OpenAI configuration
+    # Step 1: Check OpenAI configuration
     print("STEP 1: Checking OpenAI Configuration...")
     openai_ok = check_openai_config()
     
@@ -186,56 +227,54 @@ def main():
         return
     
     print("\n" + "=" * 60)
-    print("OPENAI CONFIGURATION OK - PROCEEDING WITH TESTS")
+    print("OPENAI CONFIGURATION OK")
     print("=" * 60)
     
-    # Test individual components
-    tests = [
-        ("template", "Template Processing Only"),
-        ("pdf", "PDF Processing Only"), 
-        ("both", "Full Integration Test")
-    ]
+    # Step 2: Check test files
+    print("\nSTEP 2: Checking Test Files...")
+    files_ok = check_test_files()
     
-    results = []
+    if not files_ok:
+        print("\n" + "=" * 60)
+        print("TEST FILES MISSING")
+        print("=" * 60)
+        print("Cannot proceed with tests. Please ensure these files exist:")
+        print("1. IND_3.2.P.1_Template.docx")
+        print("2. THPG001009 Product Code.pdf")
+        print("\nThese files should be in the same directory as this test script.")
+        return
     
-    for test_type, description in tests:
-        print(f"\nStarting: {description}")
-        success = test_openai_components(test_type)
-        results.append((description, success))
-        
-        if not success:
-            print(f"Test '{description}' failed. Check your OpenAI configuration.")
-        
-        # Small delay between tests
-        time.sleep(2)
+    print("\n" + "=" * 60)
+    print("TEST FILES OK")
+    print("=" * 60)
+    
+    # Step 3: Test document generation
+    print("\nSTEP 3: Testing Document Generation...")
+    success = test_document_generation()
     
     # Final summary
     print("\n" + "=" * 60)
     print("FINAL TEST RESULTS")
     print("=" * 60)
     
-    for description, success in results:
-        status = "PASS" if success else "FAIL"
-        print(f"{status} {description}")
-    
-    total_tests = len(results)
-    passed_tests = sum(1 for _, success in results if success)
-    
-    print(f"\nOverall: {passed_tests}/{total_tests} tests passed")
-    
-    if passed_tests == total_tests:
-        print("All tests passed! Your OpenAI implementation is working correctly.")
+    if success:
+        print("✅ ALL TESTS PASSED!")
+        print("Your simplified document generation function is working correctly.")
+        print("\nThe function successfully:")
+        print("1. Uploaded the template and source documents to OpenAI")
+        print("2. Generated a new document using the prompt and uploaded files")
+        print("3. Converted the result to DOCX format")
+        print("4. Saved the generated document locally")
     else:
-        print("Some tests failed. Check the logs above for details.")
-        print(f"\nFAILURE SUMMARY:")
-        print(f"- {total_tests - passed_tests} out of {total_tests} tests failed")
-        print(f"- This means your OpenAI functions are returning None")
-        print(f"- Check the Flask server console for detailed error logs")
-        print("\nTo fix the issues:")
-        print("1. Check that your OpenAI API key is properly configured")
-        print("2. Ensure your API key is valid and has sufficient credits")
-        print("3. Check the Flask server logs for detailed error messages")
-        print("4. Make sure the Flask server is running: python flask_api.py")
+        print("❌ TEST FAILED")
+        print("The document generation test failed. Check the logs above for details.")
+        print("\nCommon issues:")
+        print("1. Flask server not running - start with: python flask_api.py")
+        print("2. OpenAI API key issues - check configuration")
+        print("3. File format issues - ensure files are valid DOCX/PDF")
+        print("4. Network/API timeout - check internet connection and OpenAI status")
+    
+    print("\n" + "=" * 60)
 
 if __name__ == "__main__":
     main()

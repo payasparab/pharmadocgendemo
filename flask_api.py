@@ -627,132 +627,7 @@ def create_sample_pharma_data():
     }
     return pd.DataFrame(data)
 
-def generate_regulatory_text_with_ai(product_code: str, dosage_form: str, 
-                                   composition_data: pd.DataFrame, 
-                                   mechanism_of_action: str,
-                                   drug_info: Dict,
-                                   additional_instructions: str = "") -> Dict[str, str]:
-    """Generate regulatory text using OpenAI"""
-    client = initialize_openai()
-    if not client:
-        raise RuntimeError("OpenAI API key not found or invalid.")
-    
-    try:
-        # Prepare composition data for AI
-        composition_text = ""
-        total_weight = 0
-        for _, row in composition_data.iterrows():
-            component = row['Component']
-            quality_ref = row['Quality_Reference']
-            function = row['Function']
-            quantity = row['Quantity_mg_per_tablet']
-            total_weight += quantity
-            composition_text += f"- {component} ({quality_ref}): {quantity} mg ({function})\n"
-        composition_text += f"- Total Weight: {total_weight} mg"
-        
-        # Build prompt
-        additional_prompt = ""
-        if additional_instructions.strip():
-            additional_prompt = f"\nAdditional Instructions: {additional_instructions}"
-        
-        prompt = f"""
-You are a regulatory-writing assistant drafting Section 3.2.P.1 "Description and Composition of the Drug Product" for an IND that is currently in Phase II clinical trials. All content must be suitable for direct inclusion in an eCTD‐compliant Module 3 dossier.
-
-Product Information:
-- Product code: {product_code}
-- Dosage form: {dosage_form}
-- Drug class: {drug_info.get('class', 'Not specified')}
-- Indication: {drug_info.get('indication', 'Not specified')}
-- Mechanism of action: {mechanism_of_action}
-
-Composition data:
-{composition_text}{additional_prompt}
-
-Required Output Structure:
-1. 3.2.P.1.1 Description of the Dosage Form
-   - One concise paragraph that identifies the dosage form and strength(s)
-   - States the active‐ingredient concentration(s) clearly
-   - Summarises the mechanism of action in one sentence
-   - Write in the third person, scientific style; do not use marketing language
-
-2. 3.2.P.1.2 Composition
-   - Introductory sentence: "The qualitative and quantitative composition of the {product_code} is provided in Table 1."
-   - Table 1 should be titled 'Composition of the {product_code}'
-   - Include all components with their quality references, functions, and quantities
-   - Do not include markdown or ASCII tables in the text. Only refer to the table by title or as Table 1.
-
-3. 3.2.P.1.3 Pharmaceutical Development
-   - Brief description of formulation development considerations
-   - Reference to key excipient functions
-
-4. 3.2.P.1.4 Manufacturing Process
-   - Overview of the manufacturing process
-   - Key process parameters and controls
-
-Please provide the text in a structured format suitable for regulatory submission.
-"""
-        
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a pharmaceutical regulatory writing expert with deep knowledge of FDA and ICH guidelines for IND submissions."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1500,
-            temperature=0.3
-        )
-        
-        ai_text = response.choices[0].message.content
-        sections = parse_ai_response(ai_text, product_code)
-        return sections
-        
-    except Exception as e:
-        raise RuntimeError(f"OpenAI API request failed: {e}")
-
-def parse_ai_response(ai_text: str, product_code: str) -> Dict[str, str]:
-    """Parse AI response into structured sections"""
-    sections = {
-        'description': '',
-        'composition_intro': '',
-        'pharmaceutical_development': '',
-        'manufacturing_process': '',
-        'table_title': f'Composition of the {product_code}'
-    }
-    
-    lines = ai_text.split('\n')
-    current_section = None
-    
-    for line in lines:
-        line = line.strip()
-        
-        # Detect section headers
-        if '3.2.P.1.1' in line or 'Description' in line:
-            current_section = 'description'
-            continue
-        elif '3.2.P.1.2' in line or 'Composition' in line:
-            current_section = 'composition_intro'
-            continue
-        elif '3.2.P.1.3' in line or 'Pharmaceutical Development' in line:
-            current_section = 'pharmaceutical_development'
-            continue
-        elif '3.2.P.1.4' in line or 'Manufacturing Process' in line:
-            current_section = 'manufacturing_process'
-            continue
-        elif line.startswith('Table') or line.startswith('The qualitative'):
-            current_section = 'composition_intro'
-        
-        # Add content to appropriate section
-        if current_section and line:
-            if current_section == 'description':
-                sections['description'] += line + ' '
-            elif current_section == 'composition_intro':
-                sections['composition_intro'] += line + ' '
-            elif current_section == 'pharmaceutical_development':
-                sections['pharmaceutical_development'] += line + ' '
-            elif current_section == 'manufacturing_process':
-                sections['manufacturing_process'] += line + ' '
-    
-    return sections
+# Legacy functions removed - replaced with upload_files_prompt_to_openai
 
 def export_to_pdf_regulatory(df: pd.DataFrame, sections: Dict[str, str], 
                             product_code: str, dosage_form: str,
@@ -1788,59 +1663,102 @@ def egnyte_clear_cache():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/test-openai-only', methods=['POST'])
-def test_openai_only():
-    """Test OpenAI components with a local PDF file"""
+@app.route('/test-document-generation', methods=['POST'])
+def test_document_generation():
+    """Test the new simplified document generation function"""
     try:
         logger.info("=" * 80)
-        logger.info("TESTING OPENAI PDF PROCESSING")
+        logger.info("TESTING SIMPLIFIED DOCUMENT GENERATION")
         logger.info("=" * 80)
         
-        # Use a local PDF file for testing
-        pdf_path = "THPG001009 Product Code.pdf"
+        # Test files
+        template_path = "IND_3.2.P.1_Template.docx"
+        source_document_path = "THPG001009 Product Code.pdf"
         
-        if not os.path.exists(pdf_path):
+        # Check if test files exist
+        if not os.path.exists(template_path):
             return jsonify({
                 "status": "error", 
-                "message": f"Test PDF file not found at {pdf_path}"
+                "message": f"Template file not found at {template_path}"
+            }), 404
+            
+        if not os.path.exists(source_document_path):
+            return jsonify({
+                "status": "error", 
+                "message": f"Source document file not found at {source_document_path}"
             }), 404
 
-        results = {}
-        
-        try:
-            # Process the PDF with OpenAI
-            pdf_analysis = process_template_with_openai(pdf_path)
-            
-            if pdf_analysis:
-                results['pdf_processing'] = {
-                    'status': 'success',
-                    'analysis_length': len(pdf_analysis),
-                    'analysis_preview': pdf_analysis[:200] + "..." if len(pdf_analysis) > 200 else pdf_analysis
-                }
-                logger.info(f"✅ PDF processing successful: {len(pdf_analysis)} characters")
-            else:
-                results['pdf_processing'] = {
-                    'status': 'failed',
-                    'error': 'process_template_with_openai returned None'
-                }
-                logger.error("❌ PDF processing failed")
-                
-        except Exception as e:
-            results['pdf_processing'] = {
-                'status': 'error',
-                'error': str(e)
-            }
-            logger.error(f"❌ PDF processing error: {e}")
+        # Test prompt
+        test_prompt = """
+You are a pharmaceutical regulatory document generation expert. 
 
-        return jsonify({
-            "status": "completed",
-            "message": "PDF processing test completed",
-            "results": results
-        })
+Please create a comprehensive regulatory document that:
+
+1. Uses the template structure and format provided
+2. Extracts and incorporates relevant information from the source document
+3. Creates a professional, well-structured document suitable for regulatory submission
+4. Maintains all necessary pharmaceutical specifications and compliance requirements
+5. Follows the template's formatting and organization
+
+IMPORTANT FORMATTING REQUIREMENTS:
+- Use clear headings with # for main sections, ## for subsections, and ### for sub-subsections
+- Use bullet points with "- " for lists
+- Use **bold** for important terms and specifications
+- Use clear, professional language without placeholders
+- Structure information logically with proper spacing
+- Include all relevant pharmaceutical data from the source document
+- Make the document ready for immediate regulatory use
+
+The document should be complete, professional, and ready for use in regulatory documentation.
+"""
+
+        logger.info("Starting document generation test...")
+        start_time = time.time()
         
+        # Call the new function
+        docx_content = upload_files_prompt_to_openai(
+            prompt=test_prompt,
+            template_path=template_path,
+            source_document_path=source_document_path
+        )
+        
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        if docx_content:
+            # Save the generated document for inspection
+            output_filename = f"generated_document_{int(time.time())}.docx"
+            with open(output_filename, 'wb') as f:
+                f.write(docx_content)
+            
+            logger.info(f"✅ Document generation successful!")
+            logger.info(f"   Processing time: {processing_time:.2f} seconds")
+            logger.info(f"   Output file: {output_filename}")
+            logger.info(f"   Document size: {len(docx_content)} bytes")
+            
+            return jsonify({
+                "status": "success",
+                "message": "Document generation test completed successfully",
+                "processing_time_seconds": processing_time,
+                "document_size_bytes": len(docx_content),
+                "output_filename": output_filename,
+                "details": {
+                    "template_file": template_path,
+                    "source_document": source_document_path,
+                    "prompt_length": len(test_prompt)
+                }
+            })
+        else:
+            logger.error("❌ Document generation failed - returned None")
+            return jsonify({
+                "status": "error",
+                "message": "Document generation failed - function returned None",
+                "processing_time_seconds": processing_time
+            }), 500
+
     except Exception as e:
         logger.error("=" * 80)
-        logger.error("PDF PROCESSING TEST FAILED")
+        logger.error("DOCUMENT GENERATION TEST FAILED")
         logger.error("=" * 80)
         logger.error(f"Error: {e}")
         import traceback
@@ -1848,7 +1766,7 @@ def test_openai_only():
         
         return jsonify({
             "status": "error",
-            "message": "PDF processing test failed",
+            "message": "Document generation test failed",
             "error": str(e)
         }), 500
 
@@ -2234,89 +2152,79 @@ def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp', f
         logger.error(f"Error downloading file to temp: {e}")
         return None
 
-def process_template_with_openai(template_file_path):
-    """Process template document using OpenAI Responses API with direct file input"""
+def upload_files_prompt_to_openai(prompt: str, template_path: str, source_document_path: str) -> str:
+    """
+    Upload files to OpenAI and generate a document using the prompt and uploaded files.
+    
+    Args:
+        prompt: The prompt text to guide document generation
+        template_path: Path to the template file (DOCX or PDF)
+        source_document_path: Path to the source document file (DOCX or PDF)
+    
+    Returns:
+        Generated document content in DOCX format as bytes
+    """
     try:
-        logger.info(f"Starting template processing for: {template_file_path}")
+        logger.info("=" * 60)
+        logger.info("STARTING DOCUMENT GENERATION WITH OPENAI")
+        logger.info("=" * 60)
+        logger.info(f"Prompt length: {len(prompt)} characters")
+        logger.info(f"Template path: {template_path}")
+        logger.info(f"Source document path: {source_document_path}")
         
+        # Initialize OpenAI client
         client = initialize_openai()
         if not client:
             logger.error("FAILED: Could not initialize OpenAI client")
             return None
         logger.info("SUCCESS: OpenAI client initialized")
         
-        # Extract text from DOCX file first
-        logger.info("Extracting text from DOCX template...")
-        from docx import Document
-        doc = Document(template_file_path)
-        template_text = ""
-        for paragraph in doc.paragraphs:
-            template_text += paragraph.text + "\n"
+        # Convert DOCX to PDF if needed for template
+        template_file_path = template_path
+        if template_path.lower().endswith('.docx'):
+            logger.info("Converting template DOCX to PDF for upload...")
+            template_pdf_path = convert_docx_to_pdf_for_upload(template_path)
+            if template_pdf_path:
+                template_file_path = template_pdf_path
+                logger.info(f"Template converted to PDF: {template_pdf_path}")
+            else:
+                logger.error("Failed to convert template to PDF")
+                return None
         
-        logger.info(f"Extracted {len(template_text)} characters from DOCX")
+        # Convert DOCX to PDF if needed for source document
+        source_file_path = source_document_path
+        if source_document_path.lower().endswith('.docx'):
+            logger.info("Converting source document DOCX to PDF for upload...")
+            source_pdf_path = convert_docx_to_pdf_for_upload(source_document_path)
+            if source_pdf_path:
+                source_file_path = source_pdf_path
+                logger.info(f"Source document converted to PDF: {source_pdf_path}")
+            else:
+                logger.error("Failed to convert source document to PDF")
+                return None
         
-        # Process template using text input instead of file
-        logger.info("Processing template with OpenAI Responses API...")
-        response = client.responses.create(
-            model="gpt-4o",
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": f"Template Content:\n{template_text}\n\nExtract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled. Focus on finding all merge fields, placeholder text, and variable sections that will need to be populated with data."
-                        }
-                    ]
-                }
-            ]
-        )
-        
-        logger.info(f"SUCCESS: Template analysis completed")
-        
-        # Extract the response text
-        template_analysis = response.output_text
-        logger.info(f"SUCCESS: Template analysis retrieved ({len(template_analysis)} characters)")
-        
-        # No file cleanup needed since we're not uploading files
-        logger.info("SUCCESS: Template processing completed")
-        
-        return template_analysis
-        
-    except Exception as e:
-        logger.error("=" * 50)
-        logger.error("TEMPLATE PROCESSING FAILED")
-        logger.error("=" * 50)
-        logger.error(f"Error type: {type(e).__name__}")
-        logger.error(f"Error message: {str(e)}")
-        import traceback
-        logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        logger.error("=" * 50)
-        return None
-
-def extract_pdf_information_with_openai(pdf_file_path):
-    """Extract information from PDF using OpenAI Responses API with direct file input"""
-    try:
-        logger.info(f"Starting PDF information extraction for: {pdf_file_path}")
-        
-        client = initialize_openai()
-        if not client:
-            logger.error("FAILED: Could not initialize OpenAI client")
-            return None
-        logger.info("SUCCESS: OpenAI client initialized")
-        
-        # Upload the PDF file to OpenAI
-        logger.info("Uploading PDF file to OpenAI...")
-        with open(pdf_file_path, 'rb') as file:
-            uploaded_file = client.files.create(
+        # Upload template file
+        logger.info("Uploading template file to OpenAI...")
+        with open(template_file_path, 'rb') as file:
+            template_file = client.files.create(
                 file=file,
-                purpose='user_data'  # Changed from 'assistants' to 'user_data'
+                purpose='user_data'
             )
-            file_id = uploaded_file.id
-        logger.info(f"SUCCESS: PDF file uploaded to OpenAI with ID: {file_id}")
+            template_file_id = template_file.id
+        logger.info(f"SUCCESS: Template file uploaded with ID: {template_file_id}")
         
-        # Extract information using direct file input
-        logger.info("Extracting PDF information with OpenAI Responses API...")
+        # Upload source document file
+        logger.info("Uploading source document file to OpenAI...")
+        with open(source_file_path, 'rb') as file:
+            source_file = client.files.create(
+                file=file,
+                purpose='user_data'
+            )
+            source_file_id = source_file.id
+        logger.info(f"SUCCESS: Source document file uploaded with ID: {source_file_id}")
+        
+        # Generate document using OpenAI Responses API
+        logger.info("Generating document with OpenAI...")
         response = client.responses.create(
             model="gpt-4o",
             input=[
@@ -2325,39 +2233,221 @@ def extract_pdf_information_with_openai(pdf_file_path):
                     "content": [
                         {
                             "type": "input_file",
-                            "file_id": file_id
+                            "file_id": template_file_id
+                        },
+                        {
+                            "type": "input_file",
+                            "file_id": source_file_id
                         },
                         {
                             "type": "input_text",
-                            "text": "Extract all key information from this pharmaceutical product specification document including: product code, product description, composition data, specifications, manufacturing information, and any other relevant pharmaceutical details. Return the information in a structured JSON format that clearly organizes all the extracted data."
+                            "text": f"""
+{prompt}
+
+INSTRUCTIONS:
+1. Use the template file as the structure and format for the new document
+2. Extract relevant information from the source document
+3. Create a comprehensive, well-structured document following the template format
+4. Maintain professional tone and regulatory compliance
+5. Return the document in clean, formatted text that can be converted to DOCX
+
+FORMATTING REQUIREMENTS:
+- Use # for main headings, ## for subheadings, ### for sub-subheadings
+- Use "- " for bullet points and lists
+- Use **bold** for important terms, specifications, and key data
+- Use clear, professional language without placeholders or brackets
+- Structure information logically with proper spacing
+- Include all relevant pharmaceutical data from the source document
+- Make the document ready for immediate regulatory use
+
+Please generate the complete document content based on the template and source document.
+"""
                         }
                     ]
                 }
             ]
         )
         
-        logger.info(f"SUCCESS: PDF information extraction completed")
+        # Extract the generated content
+        generated_content = response.output_text
+        logger.info(f"SUCCESS: Document generated ({len(generated_content)} characters)")
         
-        # Extract the response text
-        pdf_information = response.output_text
-        logger.info(f"SUCCESS: PDF information extracted ({len(pdf_information)} characters)")
+        # Convert the generated text to DOCX format
+        logger.info("Converting generated content to DOCX format...")
+        docx_content = convert_text_to_docx(generated_content)
+        if not docx_content:
+            logger.error("Failed to convert generated content to DOCX")
+            return None
         
-        # Clean up - delete the uploaded file
-        logger.info("Cleaning up OpenAI resources...")
-        client.files.delete(file_id)
-        logger.info("SUCCESS: OpenAI resources cleaned up")
+        # Clean up uploaded files
+        logger.info("Cleaning up uploaded files...")
+        try:
+            client.files.delete(template_file_id)
+            client.files.delete(source_file_id)
+            logger.info("SUCCESS: Uploaded files cleaned up")
+        except Exception as e:
+            logger.warning(f"Warning: Could not delete uploaded files: {e}")
         
-        return pdf_information
+        # Clean up temporary PDF files if they were created
+        if template_file_path != template_path and os.path.exists(template_file_path):
+            os.unlink(template_file_path)
+        if source_file_path != source_document_path and os.path.exists(source_file_path):
+            os.unlink(source_file_path)
+        
+        logger.info("SUCCESS: Document generation completed")
+        logger.info("=" * 60)
+        
+        return docx_content
         
     except Exception as e:
-        logger.error("=" * 50)
-        logger.error("PDF INFORMATION EXTRACTION FAILED")
-        logger.error("=" * 50)
+        logger.error("=" * 60)
+        logger.error("DOCUMENT GENERATION FAILED")
+        logger.error("=" * 60)
         logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Error message: {str(e)}")
         import traceback
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        logger.error("=" * 50)
+        logger.error("=" * 60)
+        return None
+
+def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
+    """Convert DOCX file to PDF for OpenAI upload"""
+    try:
+        from docx import Document
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Paragraph
+        from reportlab.lib.styles import getSampleStyleSheet
+        
+        # Extract text from DOCX
+        doc = Document(docx_path)
+        text_content = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                text_content.append(paragraph.text.strip())
+        
+        # Create PDF
+        pdf_path = docx_path.replace('.docx', '_temp.pdf')
+        doc_pdf = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        for text in text_content:
+            story.append(Paragraph(text, styles['Normal']))
+        
+        doc_pdf.build(story)
+        return pdf_path
+        
+    except Exception as e:
+        logger.error(f"Error converting DOCX to PDF: {e}")
+        return None
+
+def convert_text_to_docx(text_content: str) -> bytes:
+    """Convert text content to DOCX format with proper formatting"""
+    try:
+        from docx import Document
+        from docx.shared import Inches, Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.style import WD_STYLE_TYPE
+        import io
+        import re
+        
+        # Create Word document
+        doc = Document()
+        
+        # Set document margins
+        sections = doc.sections
+        for section in sections:
+            section.top_margin = Inches(1)
+            section.bottom_margin = Inches(1)
+            section.left_margin = Inches(1)
+            section.right_margin = Inches(1)
+        
+        # Add title
+        title = doc.add_heading('Regulatory Document', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Process content line by line for better formatting
+        lines = text_content.split('\n')
+        current_paragraph = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Handle different types of content
+            if line.startswith('# '):
+                # Main heading
+                heading_text = line[2:].strip()
+                doc.add_heading(heading_text, 1)
+                
+            elif line.startswith('## '):
+                # Sub heading
+                heading_text = line[3:].strip()
+                doc.add_heading(heading_text, 2)
+                
+            elif line.startswith('### '):
+                # Sub-sub heading
+                heading_text = line[4:].strip()
+                doc.add_heading(heading_text, 3)
+                
+            elif line.startswith('- **') and line.endswith('**'):
+                # Bold list item
+                item_text = line[2:].strip()  # Remove "- "
+                item_text = re.sub(r'\*\*(.*?)\*\*', r'\1', item_text)  # Remove ** markers
+                p = doc.add_paragraph()
+                p.add_run('• ').bold = True
+                p.add_run(item_text).bold = True
+                
+            elif line.startswith('- '):
+                # Regular list item
+                item_text = line[2:].strip()
+                p = doc.add_paragraph()
+                p.add_run('• ')
+                p.add_run(item_text)
+                
+            elif line.startswith('**') and line.endswith('**'):
+                # Bold text
+                bold_text = line[2:-2].strip()
+                p = doc.add_paragraph()
+                p.add_run(bold_text).bold = True
+                
+            elif line.startswith('Table'):
+                # Table reference
+                p = doc.add_paragraph()
+                p.add_run(line).italic = True
+                
+            elif ':' in line and len(line.split(':')) == 2:
+                # Key-value pairs
+                key, value = line.split(':', 1)
+                p = doc.add_paragraph()
+                p.add_run(key.strip() + ': ').bold = True
+                p.add_run(value.strip())
+                
+            else:
+                # Regular paragraph
+                # Clean up any remaining markdown
+                clean_text = re.sub(r'\*\*(.*?)\*\*', r'\1', line)  # Remove ** markers
+                clean_text = re.sub(r'\[.*?\]', '', clean_text)  # Remove [placeholder] text
+                clean_text = clean_text.strip()
+                
+                if clean_text and clean_text != line.strip():
+                    # If we cleaned up markdown, make it bold
+                    p = doc.add_paragraph()
+                    p.add_run(clean_text).bold = True
+                elif clean_text:
+                    # Regular paragraph
+                    doc.add_paragraph(clean_text)
+        
+        # Save to bytes
+        doc_bytes = io.BytesIO()
+        doc.save(doc_bytes)
+        doc_bytes.seek(0)
+        
+        return doc_bytes.getvalue()
+        
+    except Exception as e:
+        logger.error(f"Error converting text to DOCX: {e}")
         return None
 
 def extract_row_data(row_data):
