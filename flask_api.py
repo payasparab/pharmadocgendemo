@@ -2132,7 +2132,7 @@ def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp', f
             logger.info(f"File path available: {file_path}")
         
         # Download file content
-        file_content = download_egnyte_file(access_token, file_id, file_path)
+        file_content = download_egnyte_file(access_token, file_id, urllib.parse.urlencode(file_path))
         if not file_content:
             logger.error(f"download_egnyte_file returned None for file_id: {file_id}")
             return None
