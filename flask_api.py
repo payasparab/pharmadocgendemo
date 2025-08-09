@@ -1790,163 +1790,57 @@ def egnyte_clear_cache():
 
 @app.route('/test-openai-only', methods=['POST'])
 def test_openai_only():
-    """Test OpenAI components without Egnyte - for development/testing"""
+    """Test OpenAI components with a local PDF file"""
     try:
         logger.info("=" * 80)
-        logger.info("TESTING OPENAI COMPONENTS (NO EGNYTE)")
+        logger.info("TESTING OPENAI PDF PROCESSING")
         logger.info("=" * 80)
         
-        data = request.get_json()
-        if not data:
-            data = {}  # Allow empty request for default testing
+        # Use a local PDF file for testing
+        pdf_path = "THPG001009 Product Code.pdf"
         
-        test_type = data.get('test_type', 'template')  # 'template', 'pdf', or 'both'
-        
+        if not os.path.exists(pdf_path):
+            return jsonify({
+                "status": "error", 
+                "message": f"Test PDF file not found at {pdf_path}"
+            }), 404
+
         results = {}
         
-        # Test 1: Template Processing
-        if test_type in ['template', 'both']:
-            logger.info("Testing template processing with OpenAI...")
+        try:
+            # Process the PDF with OpenAI
+            pdf_analysis = process_template_with_openai(pdf_path)
             
-            # Create a mock template file for testing
-            mock_template_content = """
-            PHARMACEUTICAL PRODUCT SPECIFICATION
-            
-            Product Code: {{PRODUCT_CODE}}
-            Product Name: {{PRODUCT_NAME}}
-            Dosage Form: {{DOSAGE_FORM}}
-            
-            Composition:
-            {{COMPOSITION_TABLE}}
-            
-            Manufacturing Information:
-            Manufacturer: {{MANUFACTURER}}
-            Lot Number: {{LOT_NUMBER}}
-            Manufacturing Date: {{MFG_DATE}}
-            
-            Specifications:
-            {{SPECIFICATIONS}}
-            
-            This is a template document with placeholders that need to be filled.
-            """
-            
-            # Create temporary template file
-            temp_template = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-            temp_template.write(mock_template_content)
-            temp_template.close()
-            
-            try:
-                template_analysis = process_template_with_openai(temp_template.name)
-                if template_analysis:
-                    results['template_processing'] = {
-                        'status': 'success',
-                        'analysis_length': len(template_analysis),
-                        'analysis_preview': template_analysis[:200] + "..." if len(template_analysis) > 200 else template_analysis
-                    }
-                    logger.info(f"✅ Template processing successful: {len(template_analysis)} characters")
-                else:
-                    results['template_processing'] = {
-                        'status': 'failed',
-                        'error': 'process_template_with_openai returned None'
-                    }
-                    logger.error("❌ Template processing failed")
-            except Exception as e:
-                results['template_processing'] = {
-                    'status': 'error',
-                    'error': str(e)
-                }
-                logger.error(f"❌ Template processing error: {e}")
-            finally:
-                # Clean up temp file
-                if os.path.exists(temp_template.name):
-                    os.unlink(temp_template.name)
-        
-        # Test 2: PDF Processing  
-        if test_type in ['pdf', 'both']:
-            logger.info("Testing PDF processing with OpenAI...")
-            
-            # Create a mock PDF content for testing
-            mock_pdf_content = """
-            PRODUCT SPECIFICATION DOCUMENT
-            
-            Product Code: THPG001009
-            Product Name: Test Pharmaceutical Product
-            Dosage Form: Immediate-release film-coated tablet
-            
-            Active Ingredients:
-            - Component A: 50mg
-            - Component B: 25mg
-            - Component C: 10mg
-            
-            Excipients:
-            - Microcrystalline cellulose
-            - Lactose monohydrate
-            - Magnesium stearate
-            
-            Manufacturing Specifications:
-            - Hardness: 4-8 kp
-            - Friability: NMT 1.0%
-            - Disintegration: NMT 30 minutes
-            
-            Quality Control:
-            - Assay: 95.0-105.0%
-            - Content uniformity: Meets USP requirements
-            """
-            
-            # Create temporary PDF-like file (text file for testing)
-            temp_pdf = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-            temp_pdf.write(mock_pdf_content)
-            temp_pdf.close()
-            
-            try:
-                pdf_analysis = extract_pdf_information_with_openai(temp_pdf.name)
-                if pdf_analysis:
-                    results['pdf_processing'] = {
-                        'status': 'success',
-                        'analysis_length': len(pdf_analysis),
-                        'analysis_preview': pdf_analysis[:200] + "..." if len(pdf_analysis) > 200 else pdf_analysis
-                    }
-                    logger.info(f"✅ PDF processing successful: {len(pdf_analysis)} characters")
-                else:
-                    results['pdf_processing'] = {
-                        'status': 'failed',
-                        'error': 'extract_pdf_information_with_openai returned None'
-                    }
-                    logger.error("❌ PDF processing failed")
-            except Exception as e:
+            if pdf_analysis:
                 results['pdf_processing'] = {
-                    'status': 'error',
-                    'error': str(e)
+                    'status': 'success',
+                    'analysis_length': len(pdf_analysis),
+                    'analysis_preview': pdf_analysis[:200] + "..." if len(pdf_analysis) > 200 else pdf_analysis
                 }
-                logger.error(f"❌ PDF processing error: {e}")
-            finally:
-                # Clean up temp file
-                if os.path.exists(temp_pdf.name):
-                    os.unlink(temp_pdf.name)
-        
-        # Summary
-        total_tests = len([k for k in results.keys() if not k.endswith('_summary')])
-        successful_tests = len([v for v in results.values() if isinstance(v, dict) and v.get('status') == 'success'])
-        
-        logger.info("=" * 80)
-        logger.info(f"OPENAI TESTING COMPLETE: {successful_tests}/{total_tests} tests passed")
-        logger.info("=" * 80)
-        
+                logger.info(f"✅ PDF processing successful: {len(pdf_analysis)} characters")
+            else:
+                results['pdf_processing'] = {
+                    'status': 'failed',
+                    'error': 'process_template_with_openai returned None'
+                }
+                logger.error("❌ PDF processing failed")
+                
+        except Exception as e:
+            results['pdf_processing'] = {
+                'status': 'error',
+                'error': str(e)
+            }
+            logger.error(f"❌ PDF processing error: {e}")
+
         return jsonify({
             "status": "completed",
-            "message": f"OpenAI testing completed: {successful_tests}/{total_tests} tests passed",
-            "test_type": test_type,
-            "results": results,
-            "summary": {
-                "total_tests": total_tests,
-                "successful_tests": successful_tests,
-                "success_rate": f"{(successful_tests/total_tests)*100:.1f}%" if total_tests > 0 else "0%"
-            }
+            "message": "PDF processing test completed",
+            "results": results
         })
         
     except Exception as e:
         logger.error("=" * 80)
-        logger.error("OPENAI TESTING FAILED")
+        logger.error("PDF PROCESSING TEST FAILED")
         logger.error("=" * 80)
         logger.error(f"Error: {e}")
         import traceback
@@ -1954,7 +1848,7 @@ def test_openai_only():
         
         return jsonify({
             "status": "error",
-            "message": "OpenAI testing failed",
+            "message": "PDF processing test failed",
             "error": str(e)
         }), 500
 
@@ -2351,17 +2245,17 @@ def process_template_with_openai(template_file_path):
             return None
         logger.info("SUCCESS: OpenAI client initialized")
         
-        # Upload the template file to OpenAI
-        logger.info("Uploading template file to OpenAI...")
-        with open(template_file_path, 'rb') as file:
-            uploaded_file = client.files.create(
-                file=file,
-                purpose='user_data'  # Changed from 'assistants' to 'user_data'
-            )
-            file_id = uploaded_file.id
-        logger.info(f"SUCCESS: Template file uploaded to OpenAI with ID: {file_id}")
+        # Extract text from DOCX file first
+        logger.info("Extracting text from DOCX template...")
+        from docx import Document
+        doc = Document(template_file_path)
+        template_text = ""
+        for paragraph in doc.paragraphs:
+            template_text += paragraph.text + "\n"
         
-        # Process template using direct file input
+        logger.info(f"Extracted {len(template_text)} characters from DOCX")
+        
+        # Process template using text input instead of file
         logger.info("Processing template with OpenAI Responses API...")
         response = client.responses.create(
             model="gpt-4o",
@@ -2370,12 +2264,8 @@ def process_template_with_openai(template_file_path):
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_file",
-                            "file_id": file_id
-                        },
-                        {
                             "type": "input_text",
-                            "text": "Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled. Focus on finding all merge fields, placeholder text, and variable sections that will need to be populated with data."
+                            "text": f"Template Content:\n{template_text}\n\nExtract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled. Focus on finding all merge fields, placeholder text, and variable sections that will need to be populated with data."
                         }
                     ]
                 }
@@ -2388,10 +2278,8 @@ def process_template_with_openai(template_file_path):
         template_analysis = response.output_text
         logger.info(f"SUCCESS: Template analysis retrieved ({len(template_analysis)} characters)")
         
-        # Clean up - delete the uploaded file
-        logger.info("Cleaning up OpenAI resources...")
-        client.files.delete(file_id)
-        logger.info("SUCCESS: OpenAI resources cleaned up")
+        # No file cleanup needed since we're not uploading files
+        logger.info("SUCCESS: Template processing completed")
         
         return template_analysis
         

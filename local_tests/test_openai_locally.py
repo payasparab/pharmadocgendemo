@@ -7,10 +7,86 @@ Run this to test your OpenAI Responses API implementation locally
 import requests
 import json
 import time
+import os
+import sys
 
 # Configuration
 BASE_URL = "http://localhost:5000"  # Change if your Flask app runs on different port
 # BASE_URL = "https://your-app.onrender.com"  # For production testing
+
+def check_openai_config():
+    """Check OpenAI configuration"""
+    print("=" * 60)
+    print("OPENAI CONFIGURATION DIAGNOSTIC")
+    print("=" * 60)
+    
+    # Check environment variable
+    env_key = os.getenv('OPENAI_API_KEY')
+    print(f"Environment Variable OPENAI_API_KEY: {'SET' if env_key else 'NOT SET'}")
+    if env_key:
+        print(f"  Length: {len(env_key)} characters")
+        print(f"  Starts with: {env_key[:10]}...")
+        if env_key == "your-openai-api-key-here":
+            print("  WARNING: Using placeholder value!")
+    
+    # Try to import from credentials
+    try:
+        # Add parent directory to path to import credentials
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from credentials import OPENAI_API_KEY
+        print(f"Credentials file OPENAI_API_KEY: {'SET' if OPENAI_API_KEY else 'NOT SET'}")
+        if OPENAI_API_KEY:
+            print(f"  Length: {len(OPENAI_API_KEY)} characters")
+            print(f"  Starts with: {OPENAI_API_KEY[:10]}...")
+            if OPENAI_API_KEY == "your-openai-api-key-here":
+                print("  WARNING: Using placeholder value!")
+    except ImportError:
+        print("Credentials file: NOT FOUND")
+    except Exception as e:
+        print(f"Credentials file: ERROR - {e}")
+    
+    # Test OpenAI client initialization
+    print("\nTesting OpenAI client initialization...")
+    try:
+        from openai import OpenAI
+        
+        # Try to get API key from flask_api logic
+        try:
+            # Add parent directory to path to import flask_api
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from flask_api import OPENAI_API_KEY, OPENAI_AVAILABLE
+            print(f"Flask API OPENAI_AVAILABLE: {OPENAI_AVAILABLE}")
+            if OPENAI_API_KEY:
+                print(f"Flask API OPENAI_API_KEY: SET ({len(OPENAI_API_KEY)} chars)")
+                
+                # Try to create client
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                print("OpenAI client created successfully!")
+                
+                # Test a simple API call
+                print("Testing simple API call...")
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": "Say 'Hello World'"}],
+                    max_tokens=10
+                )
+                print(f"API call successful: {response.choices[0].message.content}")
+                return True
+                
+            else:
+                print("Flask API OPENAI_API_KEY: NOT SET")
+                return False
+                
+        except Exception as e:
+            print(f"Flask API import error: {e}")
+            return False
+            
+    except ImportError:
+        print("OpenAI library not installed")
+        return False
+    except Exception as e:
+        print(f"OpenAI client error: {e}")
+        return False
 
 def test_openai_components(test_type="template"):
     """
@@ -54,6 +130,8 @@ def test_openai_components(test_type="template"):
             
             # Print detailed results
             results = result.get('results', {})
+            all_tests_passed = True
+            
             for test_name, test_result in results.items():
                 status = test_result.get('status', 'unknown')
                 print(f"\n{test_name.upper()}:")
@@ -66,10 +144,13 @@ def test_openai_components(test_type="template"):
                         print(f"  Preview: {preview[:100]}...")
                 elif status == 'failed':
                     print(f"  Error: {test_result.get('error', 'Unknown error')}")
+                    all_tests_passed = False
                 elif status == 'error':
                     print(f"  Exception: {test_result.get('error', 'Unknown exception')}")
+                    all_tests_passed = False
             
-            return True
+            # Only return True if ALL tests actually passed
+            return all_tests_passed
             
         else:
             print(f"FAILED!")
@@ -88,6 +169,25 @@ def main():
     print("Starting OpenAI Component Testing...")
     print("This will test your new Responses API implementation without Egnyte")
     print()
+    
+    # First, check OpenAI configuration
+    print("STEP 1: Checking OpenAI Configuration...")
+    openai_ok = check_openai_config()
+    
+    if not openai_ok:
+        print("\n" + "=" * 60)
+        print("OPENAI CONFIGURATION FAILED")
+        print("=" * 60)
+        print("Cannot proceed with tests. Please fix OpenAI configuration:")
+        print("1. Add OPENAI_API_KEY to your credentials.py file, or")
+        print("2. Set OPENAI_API_KEY environment variable")
+        print("3. Ensure your API key is valid and has sufficient credits")
+        print("4. Make sure the openai library is installed: pip install openai")
+        return
+    
+    print("\n" + "=" * 60)
+    print("OPENAI CONFIGURATION OK - PROCEEDING WITH TESTS")
+    print("=" * 60)
     
     # Test individual components
     tests = [
@@ -127,6 +227,15 @@ def main():
         print("All tests passed! Your OpenAI implementation is working correctly.")
     else:
         print("Some tests failed. Check the logs above for details.")
+        print(f"\nFAILURE SUMMARY:")
+        print(f"- {total_tests - passed_tests} out of {total_tests} tests failed")
+        print(f"- This means your OpenAI functions are returning None")
+        print(f"- Check the Flask server console for detailed error logs")
+        print("\nTo fix the issues:")
+        print("1. Check that your OpenAI API key is properly configured")
+        print("2. Ensure your API key is valid and has sufficient credits")
+        print("3. Check the Flask server logs for detailed error messages")
+        print("4. Make sure the Flask server is running: python flask_api.py")
 
 if __name__ == "__main__":
     main()
