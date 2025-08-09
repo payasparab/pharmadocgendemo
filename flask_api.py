@@ -2176,8 +2176,7 @@ def process_template_with_openai(template_file_path):
         assistant = client.beta.assistants.create(
             name="Template Processor",
             instructions="Extract the template structure and placeholders from this document",
-            tools=[{"type": "retrieval"}],
-            file_ids=[file_id]
+            tools=[{"type": "file_search"}]
         )
         logger.info(f"SUCCESS: Assistant created with ID: {assistant.id}")
         
@@ -2187,7 +2186,13 @@ def process_template_with_openai(template_file_path):
         message = client.beta.threads.messages.create(
             thread_id=thread.id,
             role="user",
-            content="Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled."
+            content="Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled.",
+            attachments=[
+                {
+                    "file_id": file_id,
+                    "tools": [{"type": "file_search"}]
+                }
+            ]
         )
         
         run = client.beta.threads.runs.create(
