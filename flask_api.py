@@ -38,8 +38,9 @@ from flask_cors import CORS
 
 # Try to import credentials, fall back to environment variables if not available
 try:
-    from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER
+    from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER, OPENAI_API_KEY
     EGNYTE_AVAILABLE = True
+    OPENAI_AVAILABLE = True
 except ImportError:
     # Use environment variables for deployment
     DOMAIN = os.getenv('EGNYTE_DOMAIN')
@@ -48,7 +49,9 @@ except ImportError:
     USERNAME = os.getenv('EGNYTE_USERNAME')
     PASSWORD = os.getenv('EGNYTE_PASSWORD')
     ROOT_FOLDER = os.getenv('EGNYTE_ROOT_FOLDER')
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     EGNYTE_AVAILABLE = all([DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER])
+    OPENAI_AVAILABLE = bool(OPENAI_API_KEY)
 
 # Rate limiting configuration for Egnyte
 # Egnyte limits: 2 calls per second, 1,000 calls per day
