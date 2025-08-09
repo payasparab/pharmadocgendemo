@@ -582,11 +582,15 @@ def background_create_egnyte_folders(molecule_code: str, campaign_number: str):
         }
 
 def load_openai_api_key():
-    """Load OpenAI API key from environment variable"""
-    return os.getenv('OPENAI_API_KEY')
+    """Load OpenAI API key from credentials or environment variable"""
+    return OPENAI_API_KEY
 
 def initialize_openai():
     """Initialize OpenAI client"""
+    if not OPENAI_AVAILABLE:
+        logger.error("OpenAI credentials not available")
+        return None
+    
     api_key = load_openai_api_key()
     if api_key and api_key != "your-openai-api-key-here":
         try:
@@ -595,7 +599,9 @@ def initialize_openai():
         except Exception as e:
             logger.error(f"Error initializing OpenAI client: {e}")
             return None
-    return None
+    else:
+        logger.error("OpenAI API key not found or invalid")
+        return None
 
 def create_sample_pharma_data():
     """Create sample pharmaceutical composition data"""
