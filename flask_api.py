@@ -1611,31 +1611,9 @@ def test_document_generation():
                 "status": "error", 
                 "message": f"Source document file not found at {source_document_path}"
             }), 404
-
+        from demo_prompt import test_prompt
         # Test prompt
-        test_prompt = """
-You are a pharmaceutical regulatory document generation expert. 
-
-Please create a comprehensive regulatory document that:
-
-1. Uses the template structure and format provided
-2. Extracts and incorporates relevant information from the source document
-3. Creates a professional, well-structured document suitable for regulatory submission
-4. Maintains all necessary pharmaceutical specifications and compliance requirements
-5. Follows the template's formatting and organization
-
-IMPORTANT FORMATTING REQUIREMENTS:
-- Use clear headings with # for main sections, ## for subsections, and ### for sub-subsections
-- Use bullet points with "- " for lists
-- Use **bold** for important terms and specifications
-- Use clear, professional language without placeholders
-- Structure information logically with proper spacing
-- Include all relevant pharmaceutical data from the source document
-- Make the document ready for immediate regulatory use
-
-The document should be complete, professional, and ready for use in regulatory documentation.
-"""
-
+        
         logger.info("Starting document generation test...")
         start_time = time.time()
         
@@ -2552,84 +2530,59 @@ def process_document_generation(matched_row):
             return {"error": "Failed to load prompt"}
         logger.info(f"SUCCESS: Prompt loaded ({len(prompt)} characters)")
         
-        # Step 3: Process template
-        logger.info("Step 3: Processing template file...")
+        # Step 3: Download template and source documents
+        logger.info("Step 3: Downloading template and source documents...")
         template_file = matched_row['matching_template']
+        source_file = matched_row['matching_source_document']
+        
         if not template_file:
             logger.error("FAILED: No template file found in matched_row")
             return {"error": "No template file found"}
         
-        logger.info(f"Template file data: {template_file}")
-        logger.info(f"Template file entry_id: {template_file.get('entry_id')}")
-        logger.info(f"Template file name: {template_file.get('name')}")
-        logger.info(f"Template file path: {template_file.get('path')}")
-        logger.info(f"Template file type: {template_file.get('type')}")
-        logger.info(f"Template file size: {template_file.get('size')}")
-        logger.info(f"Template file last_modified: {template_file.get('last_modified')}")
+        if not source_file:
+            logger.error("FAILED: No source document found in matched_row")
+            return {"error": "No source document found"}
         
+        logger.info(f"Template file: {template_file.get('name')} (ID: {template_file.get('entry_id')})")
+        logger.info(f"Source file: {source_file.get('name')} (ID: {source_file.get('entry_id')})")
+        
+        # Download template file
         template_temp_path = download_egnyte_file_to_temp(access_token, template_file['entry_id'], '.docx', template_file.get('path'))
         if not template_temp_path:
             logger.error("FAILED: Could not download template file to temp location")
             return {"error": "Failed to download template file"}
         logger.info(f"SUCCESS: Template downloaded to {template_temp_path}")
         
-        logger.info("Processing template with OpenAI...")
-        template_analysis = process_template_with_openai(template_temp_path)
-        os.unlink(template_temp_path)  # Clean up temp file
-        logger.info("Cleaned up template temp file")
-        
-        if not template_analysis:
-            logger.error("FAILED: Could not process template with OpenAI")
-            return {"error": "Failed to process template"}
-        logger.info(f"SUCCESS: Template analysis completed ({len(template_analysis)} characters)")
-        
-        # Step 4: Process source document
-        logger.info("Step 4: Processing source document...")
-        source_file = matched_row['matching_source_document']
-        if not source_file:
-            logger.error("FAILED: No source document found in matched_row")
-            return {"error": "No source document found"}
-        
-        logger.info(f"Source file data: {source_file}")
-        logger.info(f"Source file entry_id: {source_file.get('entry_id')}")
-        logger.info(f"Source file name: {source_file.get('name')}")
-        
+        # Download source document
         source_temp_path = download_egnyte_file_to_temp(access_token, source_file['entry_id'], '.pdf', source_file.get('path'))
         if not source_temp_path:
             logger.error("FAILED: Could not download source document to temp location")
             return {"error": "Failed to download source document"}
         logger.info(f"SUCCESS: Source document downloaded to {source_temp_path}")
         
-        logger.info("Extracting PDF information with OpenAI...")
-        pdf_information = extract_pdf_information_with_openai(source_temp_path)
-        os.unlink(source_temp_path)  # Clean up temp file
-        logger.info("Cleaned up source document temp file")
+        # Step 4: Generate document using the new upload_files_prompt_to_openai function
+        logger.info("Step 4: Generating document with OpenAI file upload...")
+        docx_content = upload_files_prompt_to_openai(
+            prompt=prompt,
+            template_path=template_temp_path,
+            source_document_path=source_temp_path
+        )
         
-        if not pdf_information:
-            logger.error("FAILED: Could not extract PDF information with OpenAI")
-            return {"error": "Failed to extract PDF information"}
-        logger.info(f"SUCCESS: PDF information extracted ({len(pdf_information)} characters)")
+        # Clean up downloaded temp files
+        logger.info("Cleaning up downloaded temp files...")
+        os.unlink(template_temp_path)
+        os.unlink(source_temp_path)
+        logger.info("Downloaded temp files cleaned up")
         
-        # Step 5: Extract row data
-        logger.info("Step 5: Extracting row data...")
-        row_data = extract_row_data(matched_row['row_data'])
-        if not row_data:
-            logger.error("FAILED: Could not extract row data")
-            return {"error": "Failed to extract row data"}
-        logger.info(f"SUCCESS: Row data extracted: {row_data}")
+        if not docx_content:
+            logger.error("FAILED: Could not generate document with OpenAI")
+            return {"error": "Failed to generate document"}
+        logger.info(f"SUCCESS: Document generated ({len(docx_content)} bytes)")
         
-        # Step 6: Generate final document
-        logger.info("Step 6: Generating final document with OpenAI...")
-        html_content = generate_final_document_with_openai(prompt, template_analysis, pdf_information, row_data)
-        if not html_content:
-            logger.error("FAILED: Could not generate final document with OpenAI")
-            return {"error": "Failed to generate final document"}
-        logger.info(f"SUCCESS: Final document generated ({len(html_content)} characters)")
-        
-        # Create output files
-        logger.info("Step 7: Creating output files...")
+        # Step 5: Create output files
+        logger.info("Step 5: Creating output files...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        product_code = row_data['product_code']
+        product_code = matched_row['row_data']['product_code']
         docx_filename = f"{product_code}_regulatory_doc_{timestamp}.docx"
         pdf_filename = f"{product_code}_regulatory_doc_{timestamp}.pdf"
         
@@ -2639,23 +2592,25 @@ def process_document_generation(matched_row):
         logger.info(f"DOCX path: {docx_path}")
         logger.info(f"PDF path: {pdf_path}")
         
-        # Convert to DOCX and PDF
-        logger.info("Converting HTML to DOCX...")
-        docx_success = convert_html_to_docx(html_content, docx_path)
-        if not docx_success:
-            logger.error("FAILED: Could not convert HTML to DOCX")
-            return {"error": "Failed to convert to DOCX"}
-        logger.info("SUCCESS: HTML converted to DOCX")
+        # Save DOCX content to file
+        with open(docx_path, 'wb') as f:
+            f.write(docx_content)
+        logger.info("SUCCESS: DOCX file created")
         
-        logger.info("Converting HTML to PDF...")
-        pdf_success = convert_html_to_pdf(html_content, pdf_path)
-        if not pdf_success:
-            logger.error("FAILED: Could not convert HTML to PDF")
+        # Convert DOCX to PDF
+        logger.info("Converting DOCX to PDF...")
+        pdf_success = convert_docx_to_pdf_for_upload(docx_path)
+        if pdf_success and os.path.exists(pdf_success):
+            # Move the PDF to the expected location
+            import shutil
+            shutil.move(pdf_success, pdf_path)
+            logger.info("SUCCESS: PDF file created")
+        else:
+            logger.error("FAILED: Could not convert DOCX to PDF")
             return {"error": "Failed to convert to PDF"}
-        logger.info("SUCCESS: HTML converted to PDF")
         
-        # Upload to Egnyte
-        logger.info("Step 8: Uploading files to Egnyte...")
+        # Step 6: Upload to Egnyte
+        logger.info("Step 6: Uploading files to Egnyte...")
         target_folder_id = "4a85f5e6-bb31-4bd1-b011-6fc75bdcb2d7"
         logger.info(f"Target folder ID: {target_folder_id}")
         
