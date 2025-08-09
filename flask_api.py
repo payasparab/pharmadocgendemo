@@ -2151,7 +2151,7 @@ def download_egnyte_file_to_temp(access_token, file_id, file_extension='.tmp', f
         return None
 
 def process_template_with_openai(template_file_path):
-    """Process template document using OpenAI Files API"""
+    """Process template document using OpenAI Responses API with direct file input"""
     try:
         logger.info(f"Starting template processing for: {template_file_path}")
         
@@ -2164,68 +2164,43 @@ def process_template_with_openai(template_file_path):
         # Upload the template file to OpenAI
         logger.info("Uploading template file to OpenAI...")
         with open(template_file_path, 'rb') as file:
-            response = client.files.create(
+            uploaded_file = client.files.create(
                 file=file,
-                purpose='assistants'
+                purpose='user_data'  # Changed from 'assistants' to 'user_data'
             )
-            file_id = response.id
+            file_id = uploaded_file.id
         logger.info(f"SUCCESS: Template file uploaded to OpenAI with ID: {file_id}")
         
-        # Create a vector store for the template file
-        logger.info("Creating vector store for template file...")
-        vector_store = client.beta.vector_stores.create(
-            name=f"Template Vector Store {file_id}",
-            file_ids=[file_id]
-        )
-        logger.info(f"SUCCESS: Vector store created with ID: {vector_store.id}")
-        
-        # Create an assistant to process the template
-        logger.info("Creating OpenAI assistant for template processing...")
-        assistant = client.beta.assistants.create(
-            name="Template Processor",
-            instructions="Extract the template structure and placeholders from this document",
+        # Process template using direct file input
+        logger.info("Processing template with OpenAI Responses API...")
+        response = client.responses.create(
             model="gpt-4o",
-            tools=[{"type": "file_search"}],
-            tool_resources={
-                "file_search": {
-                    "vector_store_ids": [vector_store.id]
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": file_id
+                        },
+                        {
+                            "type": "input_text",
+                            "text": "Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled. Focus on finding all merge fields, placeholder text, and variable sections that will need to be populated with data."
+                        }
+                    ]
                 }
-            }
-        )
-        logger.info(f"SUCCESS: Assistant created with ID: {assistant.id}")
-        
-        # Create a thread and run
-        logger.info("Creating thread and running template analysis...")
-        thread = client.beta.threads.create()
-        message = client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content="Extract the template structure, identify placeholders, and return a JSON representation of the template with sections and variables that need to be filled."
+            ]
         )
         
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=assistant.id
-        )
-        logger.info(f"SUCCESS: Run started with ID: {run.id}")
+        logger.info(f"SUCCESS: Template analysis completed")
         
-        # Wait for completion
-        logger.info("Waiting for template analysis to complete...")
-        while run.status != 'completed':
-            time.sleep(1)
-            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            logger.info(f"Run status: {run.status}")
-        
-        # Get the response
-        logger.info("Retrieving template analysis results...")
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        template_analysis = messages.data[0].content[0].text.value
+        # Extract the response text
+        template_analysis = response.output_text
         logger.info(f"SUCCESS: Template analysis retrieved ({len(template_analysis)} characters)")
         
-        # Clean up
+        # Clean up - delete the uploaded file
         logger.info("Cleaning up OpenAI resources...")
         client.files.delete(file_id)
-        client.beta.assistants.delete(assistant.id)
         logger.info("SUCCESS: OpenAI resources cleaned up")
         
         return template_analysis
@@ -2242,7 +2217,7 @@ def process_template_with_openai(template_file_path):
         return None
 
 def extract_pdf_information_with_openai(pdf_file_path):
-    """Extract information from PDF using OpenAI Files API"""
+    """Extract information from PDF using OpenAI Responses API with direct file input"""
     try:
         logger.info(f"Starting PDF information extraction for: {pdf_file_path}")
         
@@ -2255,55 +2230,43 @@ def extract_pdf_information_with_openai(pdf_file_path):
         # Upload the PDF file to OpenAI
         logger.info("Uploading PDF file to OpenAI...")
         with open(pdf_file_path, 'rb') as file:
-            response = client.files.create(
+            uploaded_file = client.files.create(
                 file=file,
-                purpose='assistants'
+                purpose='user_data'  # Changed from 'assistants' to 'user_data'
             )
-            file_id = response.id
+            file_id = uploaded_file.id
         logger.info(f"SUCCESS: PDF file uploaded to OpenAI with ID: {file_id}")
         
-        # Create an assistant to extract information
-        logger.info("Creating OpenAI assistant for PDF information extraction...")
-        assistant = client.beta.assistants.create(
-            name="PDF Information Extractor",
-            instructions="Extract all key information from this pharmaceutical product specification document including product details, composition data, and specifications. Return the information in a structured JSON format.",
-            tools=[{"type": "retrieval"}],
-            file_ids=[file_id]
+        # Extract information using direct file input
+        logger.info("Extracting PDF information with OpenAI Responses API...")
+        response = client.responses.create(
+            model="gpt-4o",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": file_id
+                        },
+                        {
+                            "type": "input_text",
+                            "text": "Extract all key information from this pharmaceutical product specification document including: product code, product description, composition data, specifications, manufacturing information, and any other relevant pharmaceutical details. Return the information in a structured JSON format that clearly organizes all the extracted data."
+                        }
+                    ]
+                }
+            ]
         )
-        logger.info(f"SUCCESS: Assistant created with ID: {assistant.id}")
         
-        # Create a thread and run
-        logger.info("Creating thread and running PDF information extraction...")
-        thread = client.beta.threads.create()
-        message = client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content="Extract all key information from this document including: product code, product description, composition data, specifications, and any other relevant pharmaceutical information. Return as structured JSON."
-        )
+        logger.info(f"SUCCESS: PDF information extraction completed")
         
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=assistant.id
-        )
-        logger.info(f"SUCCESS: Run started with ID: {run.id}")
-        
-        # Wait for completion
-        logger.info("Waiting for PDF information extraction to complete...")
-        while run.status != 'completed':
-            time.sleep(1)
-            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            logger.info(f"Run status: {run.status}")
-        
-        # Get the response
-        logger.info("Retrieving PDF information extraction results...")
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        pdf_information = messages.data[0].content[0].text.value
+        # Extract the response text
+        pdf_information = response.output_text
         logger.info(f"SUCCESS: PDF information extracted ({len(pdf_information)} characters)")
         
-        # Clean up
+        # Clean up - delete the uploaded file
         logger.info("Cleaning up OpenAI resources...")
         client.files.delete(file_id)
-        client.beta.assistants.delete(assistant.id)
         logger.info("SUCCESS: OpenAI resources cleaned up")
         
         return pdf_information
