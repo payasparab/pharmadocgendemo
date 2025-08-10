@@ -2308,18 +2308,21 @@ INSTRUCTIONS:
 2. Extract relevant information from the source document
 3. Create a comprehensive, well-structured document following the template format
 4. Maintain professional tone and regulatory compliance
-5. Return the document in clean, formatted text that can be converted to DOCX
+5. Return the document in clean, properly formatted HTML that can be converted to DOCX
 
 FORMATTING REQUIREMENTS:
-- Use # for main headings, ## for subheadings, ### for sub-subheadings
-- Use "- " for bullet points and lists
-- Use **bold** for important terms, specifications, and key data
+- Use <h1> for main headings, <h2> for subheadings, <h3> for sub-subheadings
+- Use <ul><li> for bullet points and lists
+- Use <strong> for important terms, specifications, and key data
+- Use <p> for paragraphs
+- Use <table><tr><td> for tables with proper structure
 - Use clear, professional language without placeholders or brackets
 - Structure information logically with proper spacing
 - Include all relevant pharmaceutical data from the source document
 - Make the document ready for immediate regulatory use
+- Return complete, valid HTML that can be directly rendered
 
-Please generate the complete document content based on the template and source document.
+Please generate the complete document content in HTML format based on the template and source document.
 """
                         }
                     ]
@@ -2331,12 +2334,28 @@ Please generate the complete document content based on the template and source d
         generated_content = response.output_text
         logger.info(f"SUCCESS: Document generated ({len(generated_content)} characters)")
         
-        # Convert the generated text to DOCX format
-        logger.info("Converting generated content to DOCX format...")
-        docx_content = convert_text_to_docx(generated_content)
-        if not docx_content:
-            logger.error("Failed to convert generated content to DOCX")
+        # Convert the generated HTML content to DOCX format
+        logger.info("Converting generated HTML content to DOCX format...")
+        
+        # Create a temporary file path for the DOCX
+        import tempfile
+        temp_docx_path = tempfile.mktemp(suffix='.docx')
+        
+        # Convert HTML to DOCX using the proper HTML converter
+        success = convert_html_to_docx(generated_content, temp_docx_path)
+        if not success:
+            logger.error("Failed to convert generated HTML content to DOCX")
             return None
+        
+        # Read the generated DOCX file
+        with open(temp_docx_path, 'rb') as docx_file:
+            docx_content = docx_file.read()
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_docx_path)
+        except:
+            pass
         
         # Clean up uploaded files
         logger.info("Cleaning up uploaded files...")
@@ -2431,25 +2450,15 @@ def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
         for paragraph in doc.paragraphs:
             text = paragraph.text.strip()
             if text:
-                # Clean text to prevent paraparser errors
-                import re
-                # Remove any HTML-like tags that might confuse paraparser
-                text = re.sub(r'<[^>]+>', '', text)
-                # Escape special characters that might cause issues
-                text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                # Remove any remaining problematic characters
-                text = re.sub(r'[^\w\s\-.,;:!?()\[\]{}"\']', '', text)
-                
-                if text.strip():  # Only add if text is not empty after cleaning
-                    # Check if it's a heading
-                    if paragraph.style.name.startswith('Heading'):
-                        level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
-                        if level == 1:
-                            story.append(Paragraph(text, title_style))
-                        else:
-                            story.append(Paragraph(text, heading_style))
+                # Check if it's a heading
+                if paragraph.style.name.startswith('Heading'):
+                    level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
+                    if level == 1:
+                        story.append(Paragraph(text, title_style))
                     else:
-                        story.append(Paragraph(text, normal_style))
+                        story.append(Paragraph(text, heading_style))
+                else:
+                    story.append(Paragraph(text, normal_style))
         
         # Process tables separately
         for table in doc.tables:
@@ -2459,10 +2468,6 @@ def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
                 row_data = []
                 for cell in row.cells:
                     cell_text = cell.text.strip()
-                    # Clean cell text to prevent paraparser errors
-                    cell_text = re.sub(r'<[^>]+>', '', cell_text)
-                    cell_text = cell_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    cell_text = re.sub(r'[^\w\s\-.,;:!?()\[\]{}"\']', '', cell_text)
                     row_data.append(cell_text)
                 table_data.append(row_data)
             
