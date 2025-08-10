@@ -2431,15 +2431,25 @@ def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
         for paragraph in doc.paragraphs:
             text = paragraph.text.strip()
             if text:
-                # Check if it's a heading
-                if paragraph.style.name.startswith('Heading'):
-                    level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
-                    if level == 1:
-                        story.append(Paragraph(text, title_style))
+                # Clean text to prevent paraparser errors
+                import re
+                # Remove any HTML-like tags that might confuse paraparser
+                text = re.sub(r'<[^>]+>', '', text)
+                # Escape special characters that might cause issues
+                text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                # Remove any remaining problematic characters
+                text = re.sub(r'[^\w\s\-.,;:!?()\[\]{}"\']', '', text)
+                
+                if text.strip():  # Only add if text is not empty after cleaning
+                    # Check if it's a heading
+                    if paragraph.style.name.startswith('Heading'):
+                        level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
+                        if level == 1:
+                            story.append(Paragraph(text, title_style))
+                        else:
+                            story.append(Paragraph(text, heading_style))
                     else:
-                        story.append(Paragraph(text, heading_style))
-                else:
-                    story.append(Paragraph(text, normal_style))
+                        story.append(Paragraph(text, normal_style))
         
         # Process tables separately
         for table in doc.tables:
@@ -2449,6 +2459,10 @@ def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
                 row_data = []
                 for cell in row.cells:
                     cell_text = cell.text.strip()
+                    # Clean cell text to prevent paraparser errors
+                    cell_text = re.sub(r'<[^>]+>', '', cell_text)
+                    cell_text = cell_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    cell_text = re.sub(r'[^\w\s\-.,;:!?()\[\]{}"\']', '', cell_text)
                     row_data.append(cell_text)
                 table_data.append(row_data)
             
