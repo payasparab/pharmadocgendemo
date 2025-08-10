@@ -2008,17 +2008,23 @@ def reg_docs_bulk_request():
         for summary in summary_table:
             print(f"{summary['status']}: {summary['count']} rows ({summary['percentage']}%)")
         
-        # Process document generation for matched rows
+        # Process document generation for matched rows - ONE AT A TIME with memory cleanup
         document_generation_results = []
         generated_docs_urls = []
         
-        for matched_row in matched_status_report:
+        logger.info(f"🔄 Starting document generation for {len(matched_status_report)} matched rows")
+        log_memory_usage("before document generation")
+        
+        for i, matched_row in enumerate(matched_status_report):
             logger.info("=" * 80)
-            logger.info("PROCESSING MATCHED ROW FOR DOCUMENT GENERATION")
+            logger.info(f"PROCESSING DOCUMENT {i+1}/{len(matched_status_report)}")
             logger.info("=" * 80)
             logger.info(f"Row index: {matched_row['row_index']}")
             logger.info(f"Product code: {matched_row['row_data']['product_code']}")
             logger.info(f"Status: {matched_row['status']}")
+            
+            # Log memory before processing this document
+            log_memory_usage(f"before document {i+1}")
             
             if matched_row['matching_template']:
                 logger.info(f"Template to use: {matched_row['matching_template'].get('name')} (ID: {matched_row['matching_template'].get('entry_id')})")
@@ -2030,41 +2036,66 @@ def reg_docs_bulk_request():
             else:
                 logger.info("No source document found!")
             
-            generation_result = process_document_generation(matched_row)
-            
-            # Extract URLs if generation was successful
-            doc_urls = {}
-            if generation_result.get('success'):
-                upload_result = generation_result.get('upload_result', {})
-                docx_result = upload_result.get('docx_result', {})
-                pdf_result = upload_result.get('pdf_result', {})
+            try:
+                # Process this single document
+                generation_result = process_document_generation(matched_row)
                 
-                # Build full URLs
-                if docx_result:
-                    docx_url = f"https://{DOMAIN}/app/index.do#storage/files/1{docx_result.get('path', '')}"
-                    doc_urls['docx_url'] = docx_url
+                # Extract URLs if generation was successful
+                doc_urls = {}
+                if generation_result.get('success'):
+                    upload_result = generation_result.get('upload_result', {})
+                    docx_result = upload_result.get('docx_result', {})
+                    pdf_result = upload_result.get('pdf_result', {})
+                    
+                    # Build full URLs
+                    if docx_result:
+                        docx_url = f"https://{DOMAIN}/app/index.do#storage/files/1{docx_result.get('path', '')}"
+                        doc_urls['docx_url'] = docx_url
+                    
+                    if pdf_result:
+                        pdf_url = f"https://{DOMAIN}/app/index.do#storage/files/1{pdf_result.get('path', '')}"
+                        doc_urls['pdf_url'] = pdf_url
                 
-                if pdf_result:
-                    pdf_url = f"https://{DOMAIN}/app/index.do#storage/files/1{pdf_result.get('path', '')}"
-                    doc_urls['pdf_url'] = pdf_url
-            
-            document_generation_results.append({
-                'row_index': matched_row['row_index'],
-                'product_code': matched_row['row_data']['product_code'],
-                'generation_result': generation_result,
-                'doc_urls': doc_urls
-            })
-            
-            # Add to generated docs URLs list
-            if doc_urls:
-                generated_docs_urls.append({
+                document_generation_results.append({
+                    'row_index': matched_row['row_index'],
                     'product_code': matched_row['row_data']['product_code'],
-                    'section': matched_row['row_data']['section'],
-                    'docx_filename': generation_result.get('docx_filename'),
-                    'pdf_filename': generation_result.get('pdf_filename'),
-                    'docx_url': doc_urls.get('docx_url'),
-                    'pdf_url': doc_urls.get('pdf_url')
+                    'generation_result': generation_result,
+                    'doc_urls': doc_urls
                 })
+                
+                # Add to generated docs URLs list
+                if doc_urls:
+                    generated_docs_urls.append({
+                        'product_code': matched_row['row_data']['product_code'],
+                        'section': matched_row['row_data']['section'],
+                        'docx_filename': generation_result.get('docx_filename'),
+                        'pdf_filename': generation_result.get('pdf_filename'),
+                        'docx_url': doc_urls.get('docx_url'),
+                        'pdf_url': doc_urls.get('pdf_url')
+                    })
+                
+                logger.info(f"✅ Document {i+1} processed successfully")
+                
+            except Exception as e:
+                logger.error(f"❌ Error processing document {i+1}: {e}")
+                # Add error result to maintain consistency
+                document_generation_results.append({
+                    'row_index': matched_row['row_index'],
+                    'product_code': matched_row['row_data']['product_code'],
+                    'generation_result': {'success': False, 'error': str(e)},
+                    'doc_urls': {}
+                })
+            
+            # CRITICAL: Clean up memory after each document
+            logger.info(f"🧹 Cleaning up memory after document {i+1}")
+            cleanup_memory()
+            cleanup_temp_files()
+            
+            # Log memory after cleanup
+            log_memory_usage(f"after document {i+1} cleanup")
+            
+            # Small delay to allow system to stabilize
+            time.sleep(1)
         
         # Create total match report
         total_match_report = {
@@ -2866,6 +2897,10 @@ def process_document_generation(matched_row):
         os.unlink(source_temp_path)
         logger.info("Downloaded temp files cleaned up")
         
+        # Memory cleanup after OpenAI processing
+        logger.info("🧹 Cleaning up memory after OpenAI processing...")
+        cleanup_memory()
+        
         if not docx_content:
             logger.error("FAILED: Could not generate document with OpenAI")
             return {"error": "Failed to generate document"}
@@ -2901,6 +2936,10 @@ def process_document_generation(matched_row):
             logger.error("FAILED: Could not convert DOCX to PDF")
             return {"error": "Failed to convert to PDF"}
         
+        # Memory cleanup after PDF conversion
+        logger.info("🧹 Cleaning up memory after PDF conversion...")
+        cleanup_memory()
+        
         # Step 6: Upload to Egnyte
         logger.info("Step 6: Uploading files to Egnyte...")
         
@@ -2925,6 +2964,11 @@ def process_document_generation(matched_row):
         os.unlink(docx_path)
         os.unlink(pdf_path)
         logger.info("Temporary files cleaned up")
+        
+        # Final memory cleanup after upload
+        logger.info("🧹 Final memory cleanup after upload...")
+        cleanup_memory()
+        cleanup_temp_files()
         
         if not upload_result:
             logger.error("FAILED: Could not upload files to Egnyte")
@@ -2953,6 +2997,56 @@ def process_document_generation(matched_row):
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
         logger.error("=" * 80)
         return {"error": str(e)}
+
+# Memory management functions
+import gc
+import psutil
+
+def cleanup_memory():
+    """Force garbage collection and log memory usage"""
+    try:
+        gc.collect()
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        logger.info(f"🧹 Memory cleanup completed - Current usage: {memory_mb:.1f} MB")
+        return memory_mb
+    except Exception as e:
+        logger.warning(f"Memory cleanup failed: {e}")
+        return None
+
+def cleanup_temp_files():
+    """Clean up temporary files to free disk space"""
+    try:
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        cleaned_count = 0
+        
+        for filename in os.listdir(temp_dir):
+            if filename.endswith(('.docx', '.pdf', '.tmp')):
+                try:
+                    file_path = os.path.join(temp_dir, filename)
+                    # Only delete files older than 1 hour to avoid deleting active files
+                    if time.time() - os.path.getmtime(file_path) > 3600:
+                        os.unlink(file_path)
+                        cleaned_count += 1
+                except Exception as e:
+                    logger.debug(f"Could not delete temp file {filename}: {e}")
+        
+        if cleaned_count > 0:
+            logger.info(f"🧹 Cleaned up {cleaned_count} temporary files")
+    except Exception as e:
+        logger.warning(f"Temp file cleanup failed: {e}")
+
+def log_memory_usage(stage=""):
+    """Log current memory usage"""
+    try:
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        logger.info(f"📊 Memory usage {stage}: {memory_mb:.1f} MB")
+        return memory_mb
+    except Exception as e:
+        logger.warning(f"Could not log memory usage: {e}")
+        return None
 
 
 if __name__ == '__main__':
