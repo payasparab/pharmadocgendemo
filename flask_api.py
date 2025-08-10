@@ -192,9 +192,17 @@ def get_egnyte_token():
                 expires_in = token_data.get("expires_in", 3600)  # Default to 1 hour
                 token_type = token_data.get("token_type", "unknown")
                 
+                # Handle token expiration
+                if expires_in == -1:
+                    # Token never expires, set expiration to a very far future date (10 years)
+                    _egnyte_token_cache['expires_at'] = current_time + (10 * 365 * 24 * 3600)  # 10 years from now
+                    logger.info(f"   Token never expires (expires_in: -1), setting cache to 10 years")
+                else:
+                    # Token expires, set expiration 5 minutes early
+                    _egnyte_token_cache['expires_at'] = current_time + expires_in - 300
+                
                 # Cache the token with expiration
                 _egnyte_token_cache['token'] = access_token
-                _egnyte_token_cache['expires_at'] = current_time + expires_in - 300  # Expire 5 minutes early
                 
                 # Save token persistently
                 save_token_to_file(_egnyte_token_cache)
@@ -214,12 +222,12 @@ def get_egnyte_token():
                 except (ValueError, IndexError):
                     retry_seconds = 30
                 
-                logger.warning(f"⚠️ Rate limit hit! Retry-After: {retry_seconds} seconds")
+                logger.warning(f"XX Rate limit hit! Retry-After: {retry_seconds} seconds")
                 logger.warning(f"   Retry-After header: {retry_after}")
                 
                 # If retry time is too long (>60 seconds), fail immediately to avoid worker timeout
                 if retry_seconds > 60:
-                    logger.error(f"❌ Rate limit retry time ({retry_seconds}s) exceeds worker timeout. Failing immediately.")
+                    logger.error(f"XX Rate limit retry time ({retry_seconds}s) exceeds worker timeout. Failing immediately.")
                     logger.error("💡 Consider implementing background job processing for bulk requests.")
                     return None
                 
@@ -229,7 +237,7 @@ def get_egnyte_token():
                 retry_count += 1
                 continue
             else:
-                logger.error(f"❌ Authentication failed!")
+                logger.error(f"XX Authentication failed!")
                 logger.error(f"   Status Code: {response.status_code}")
                 logger.error(f"   Response Text: {response.text}")
                 
@@ -259,24 +267,24 @@ def get_egnyte_token():
                 return None
                 
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"❌ Connection error: {e}")
+            logger.error(f"XX Connection error: {e}")
             logger.error(f"   This might indicate network issues or domain problems")
             return None
         except requests.exceptions.Timeout as e:
-            logger.error(f"❌ Timeout error: {e}")
+            logger.error(f"XX Timeout error: {e}")
             logger.error(f"   Request timed out - server might be slow or unreachable")
             return None
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Request error: {e}")
+            logger.error(f"XX Request error: {e}")
             logger.error(f"   General request failure")
             return None
         except Exception as e:
-            logger.error(f"❌ Unexpected error getting Egnyte token: {e}")
+            logger.error(f"XX Unexpected error getting Egnyte token: {e}")
             logger.error(f"   Error type: {type(e).__name__}")
             return None
     
     # If we've exhausted all retries
-    logger.error(f"❌ Authentication failed after {max_retries} retries due to rate limiting")
+    logger.error(f"XX Authentication failed after {max_retries} retries due to rate limiting")
     return None
 
 def create_egnyte_folder(access_token, parent_folder_id, folder_name):
@@ -1720,7 +1728,7 @@ def test_document_generation():
                 }
             })
         else:
-            logger.error("❌ Document generation failed - returned None")
+            logger.error("XX Document generation failed - returned None")
             return jsonify({
                 "status": "error",
                 "message": "Document generation failed - function returned None",
