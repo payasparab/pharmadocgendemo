@@ -2428,21 +2428,25 @@ def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
         story = []
         
         # Process document content
+        paragraph_index = 0
         for element in doc.element.body:
             if element.tag.endswith('p'):  # Paragraph
-                paragraph = doc.paragraphs[len(story) if story else 0]
-                text = paragraph.text.strip()
-                
-                if text:
-                    # Check if it's a heading
-                    if paragraph.style.name.startswith('Heading'):
-                        level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
-                        if level == 1:
-                            story.append(Paragraph(text, title_style))
+                # Safely access paragraph by index
+                if paragraph_index < len(doc.paragraphs):
+                    paragraph = doc.paragraphs[paragraph_index]
+                    text = paragraph.text.strip()
+                    paragraph_index += 1
+                    
+                    if text:
+                        # Check if it's a heading
+                        if paragraph.style.name.startswith('Heading'):
+                            level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
+                            if level == 1:
+                                story.append(Paragraph(text, title_style))
+                            else:
+                                story.append(Paragraph(text, heading_style))
                         else:
-                            story.append(Paragraph(text, heading_style))
-                    else:
-                        story.append(Paragraph(text, normal_style))
+                            story.append(Paragraph(text, normal_style))
                         
             elif element.tag.endswith('tbl'):  # Table
                 # Find the corresponding table
