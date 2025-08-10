@@ -1515,23 +1515,44 @@ def upload_file_to_egnyte(access_token, folder_id, file_name, file_content):
     """Upload a file to Egnyte"""
     try:
         url = f"https://{DOMAIN}/pubapi/v1/fs-content/ids/folder/{folder_id}"
+        
+        # Determine content type based on file extension
+        if file_name.lower().endswith('.docx'):
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif file_name.lower().endswith('.pdf'):
+            content_type = "application/pdf"
+        else:
+            content_type = "application/octet-stream"
+        
         headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "Authorization": f"Bearer {access_token}"
         }
         
         files = {
-            'file': (file_name, file_content, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+            'file': (file_name, file_content, content_type)
         }
         
         rate_limit_delay()
+        logger.info(f"Uploading file '{file_name}' to folder {folder_id}")
+        logger.info(f"File size: {len(file_content)} bytes")
+        logger.info(f"Content type: {content_type}")
+        
         response = requests.post(url, headers=headers, files=files)
+        
+        logger.info(f"Upload response status: {response.status_code}")
+        if response.status_code != 200:
+            logger.error(f"Upload failed with status {response.status_code}")
+            logger.error(f"Response text: {response.text}")
+        
         response.raise_for_status()
         
-        return response.json()
+        result = response.json()
+        logger.info(f"Upload successful for file '{file_name}'")
+        return result
         
     except Exception as e:
         logger.error(f"Error uploading file to Egnyte: {e}")
+        logger.error(f"File: {file_name}, Folder: {folder_id}")
         return None
 
 def generate_document_with_openai(template_content, source_contents, document_name):
@@ -2739,7 +2760,19 @@ def process_document_generation(matched_row):
         
         # Step 6: Upload to Egnyte
         logger.info("Step 6: Uploading files to Egnyte...")
-        target_folder_id = "4a85f5e6-bb31-4bd1-b011-6fc75bdcb2d7"
+        
+        # Find the target folder dynamically
+        molecule_code = matched_row['row_data'].get('molecule_code', 'THPG001')
+        campaign_number = matched_row['row_data'].get('campaign_number', '4')
+        
+        logger.info(f"Looking for target folder for molecule: {molecule_code}, campaign: {campaign_number}")
+        target_folder_id = find_egnyte_target_folder(access_token, molecule_code, campaign_number)
+        
+        if not target_folder_id:
+            logger.warning("Could not find target folder, using fallback folder")
+            # Fallback to a known folder - you might want to update this
+            target_folder_id = "4a85f5e6-bb31-4bd1-b011-6fc75bdcb2d7"
+        
         logger.info(f"Target folder ID: {target_folder_id}")
         
         upload_result = upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, target_folder_id)
