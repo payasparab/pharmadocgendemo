@@ -2238,12 +2238,29 @@ def upload_files_prompt_to_openai(prompt: str, template_path: str, source_docume
             return None
         logger.info("SUCCESS: OpenAI client initialized")
         
-        # Use files directly - OpenAI can handle DOCX files natively
+        # Convert DOCX to PDF if needed for template (Responses API requires PDF)
         template_file_path = template_path
-        source_file_path = source_document_path
+        if template_path.lower().endswith('.docx'):
+            logger.info("Converting template DOCX to PDF for upload...")
+            template_pdf_path = convert_docx_to_pdf_for_upload(template_path)
+            if template_pdf_path:
+                template_file_path = template_pdf_path
+                logger.info(f"Template converted to PDF: {template_pdf_path}")
+            else:
+                logger.error("Failed to convert template to PDF")
+                return None
         
-        logger.info(f"Using template file directly: {template_file_path}")
-        logger.info(f"Using source document directly: {source_file_path}")
+        # Convert DOCX to PDF if needed for source document (Responses API requires PDF)
+        source_file_path = source_document_path
+        if source_document_path.lower().endswith('.docx'):
+            logger.info("Converting source document DOCX to PDF for upload...")
+            source_pdf_path = convert_docx_to_pdf_for_upload(source_document_path)
+            if source_pdf_path:
+                source_file_path = source_pdf_path
+                logger.info(f"Source document converted to PDF: {source_pdf_path}")
+            else:
+                logger.error("Failed to convert source document to PDF")
+                return None
         
         # Upload template file
         logger.info("Uploading template file to OpenAI...")
@@ -2410,71 +2427,60 @@ def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
         
         story = []
         
-        # Process document content
-        paragraph_index = 0
-        for element in doc.element.body:
-            if element.tag.endswith('p'):  # Paragraph
-                # Safely access paragraph by index
-                if paragraph_index < len(doc.paragraphs):
-                    paragraph = doc.paragraphs[paragraph_index]
-                    text = paragraph.text.strip()
-                    paragraph_index += 1
+        # Process document content - simplified approach
+        for paragraph in doc.paragraphs:
+            text = paragraph.text.strip()
+            if text:
+                # Check if it's a heading
+                if paragraph.style.name.startswith('Heading'):
+                    level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
+                    if level == 1:
+                        story.append(Paragraph(text, title_style))
+                    else:
+                        story.append(Paragraph(text, heading_style))
+                else:
+                    story.append(Paragraph(text, normal_style))
+        
+        # Process tables separately
+        for table in doc.tables:
+            # Convert table to ReportLab format
+            table_data = []
+            for row in table.rows:
+                row_data = []
+                for cell in row.cells:
+                    cell_text = cell.text.strip()
+                    row_data.append(cell_text)
+                table_data.append(row_data)
+            
+            if table_data:
+                # Create ReportLab table
+                rl_table = Table(table_data)
+                
+                # Apply professional table styling
+                table_style = TableStyle([
+                    # Header row styling
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),  # Blue background
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),  # White text
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                     
-                    if text:
-                        # Check if it's a heading
-                        if paragraph.style.name.startswith('Heading'):
-                            level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
-                            if level == 1:
-                                story.append(Paragraph(text, title_style))
-                            else:
-                                story.append(Paragraph(text, heading_style))
-                        else:
-                            story.append(Paragraph(text, normal_style))
-                        
-            elif element.tag.endswith('tbl'):  # Table
-                # Find the corresponding table
-                table_index = len([item for item in story if isinstance(item, Table)])
-                if table_index < len(doc.tables):
-                    table = doc.tables[table_index]
+                    # Data rows styling
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F2F2F2')),  # Light gray
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), 9),
                     
-                    # Convert table to ReportLab format
-                    table_data = []
-                    for row in table.rows:
-                        row_data = []
-                        for cell in row.cells:
-                            cell_text = cell.text.strip()
-                            row_data.append(cell_text)
-                        table_data.append(row_data)
-                    
-                    if table_data:
-                        # Create ReportLab table
-                        rl_table = Table(table_data)
-                        
-                        # Apply professional table styling
-                        table_style = TableStyle([
-                            # Header row styling
-                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),  # Blue background
-                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),  # White text
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, 0), 10),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                            
-                            # Data rows styling
-                            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F2F2F2')),  # Light gray
-                            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                            ('FONTSIZE', (0, 1), (-1, -1), 9),
-                            
-                            # Grid and alignment
-                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F8F8')]),
-                        ])
-                        
-                        rl_table.setStyle(table_style)
-                        story.append(rl_table)
-                        story.append(Spacer(1, 12))  # Add spacing after table
+                    # Grid and alignment
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F8F8')]),
+                ])
+                
+                rl_table.setStyle(table_style)
+                story.append(rl_table)
+                story.append(Spacer(1, 12))  # Add spacing after table
         
         # Build PDF
         doc_pdf.build(story)

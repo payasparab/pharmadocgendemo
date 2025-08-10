@@ -109,7 +109,3 @@ QUALITY CRITERIA:
 • HTML must render properly in both DOCX and PDF conversion
 
 Generate the complete HTML document now, substituting actual composition data and ensuring professional formatting."""
-
-def test_prompt():
-    """Test prompt for document generation"""
-    return prompt
