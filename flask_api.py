@@ -63,9 +63,33 @@ _egnyte_token_cache = {
     'expires_at': None
 }
 
+# Persistent token storage file
+TOKEN_CACHE_FILE = 'egnyte_token_cache.json'
+
 def rate_limit_delay():
     """Add delay to respect rate limits"""
     time.sleep(RATE_LIMIT_DELAY)
+
+def save_token_to_file(token_data):
+    """Save token to persistent file"""
+    try:
+        with open(TOKEN_CACHE_FILE, 'w') as f:
+            json.dump(token_data, f)
+        logger.info(f"💾 Token saved to {TOKEN_CACHE_FILE}")
+    except Exception as e:
+        logger.warning(f"Could not save token to file: {e}")
+
+def load_token_from_file():
+    """Load token from persistent file"""
+    try:
+        if os.path.exists(TOKEN_CACHE_FILE):
+            with open(TOKEN_CACHE_FILE, 'r') as f:
+                token_data = json.load(f)
+            logger.info(f"📂 Token loaded from {TOKEN_CACHE_FILE}")
+            return token_data
+    except Exception as e:
+        logger.warning(f"Could not load token from file: {e}")
+    return None
 
 def clear_egnyte_token_cache():
     """Clear the cached Egnyte token"""
@@ -74,6 +98,13 @@ def clear_egnyte_token_cache():
         'token': None,
         'expires_at': None
     }
+    # Also delete the persistent file
+    try:
+        if os.path.exists(TOKEN_CACHE_FILE):
+            os.remove(TOKEN_CACHE_FILE)
+            logger.info(f"🗑️ Deleted {TOKEN_CACHE_FILE}")
+    except Exception as e:
+        logger.warning(f"Could not delete token file: {e}")
     logger.info("🗑️ Cleared Egnyte token cache")
 
 # Configure logging
@@ -102,6 +133,20 @@ def get_egnyte_token():
         current_time < _egnyte_token_cache['expires_at']):
         logger.info("✅ Using cached Egnyte token")
         return _egnyte_token_cache['token']
+    
+    # Try to load from persistent file
+    if not _egnyte_token_cache['token']:
+        persistent_token = load_token_from_file()
+        if persistent_token:
+            _egnyte_token_cache.update(persistent_token)
+            # Check if the loaded token is still valid
+            if (_egnyte_token_cache['token'] and 
+                _egnyte_token_cache['expires_at'] and 
+                current_time < _egnyte_token_cache['expires_at']):
+                logger.info("✅ Using persistent Egnyte token")
+                return _egnyte_token_cache['token']
+            else:
+                logger.info("📂 Persistent token expired, will request new one")
     
     logger.info(f"🔐 Attempting Egnyte authentication...")
     logger.info(f"   Domain: {DOMAIN}")
@@ -150,6 +195,9 @@ def get_egnyte_token():
                 # Cache the token with expiration
                 _egnyte_token_cache['token'] = access_token
                 _egnyte_token_cache['expires_at'] = current_time + expires_in - 300  # Expire 5 minutes early
+                
+                # Save token persistently
+                save_token_to_file(_egnyte_token_cache)
                 
                 logger.info(f"✅ Authentication successful!")
                 logger.info(f"   Token Type: {token_type}")
@@ -2017,13 +2065,93 @@ def reg_docs_bulk_request():
 def load_prompt_from_file():
     """Load the prompt from demo_prompt.py"""
     try:
-        with open('demo_prompt.py', 'r') as file:
-            content = file.read()
-            # Extract the prompt variable content
-            start = content.find('prompt = """') + 11
-            end = content.find('"""', start)
-            prompt = content[start:end]
-            return prompt
+        # Try UTF-8 first, then fall back to other encodings
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+        
+        for encoding in encodings:
+            try:
+                with open('demo_prompt.py', 'r', encoding=encoding) as file:
+                    content = file.read()
+                    # Extract the prompt variable content
+                    start = content.find('prompt = """') + 11
+                    end = content.find('"""', start)
+                    if start > 10 and end > start:  # Valid indices
+                        prompt = content[start:end]
+                        logger.info(f"Successfully loaded prompt with {encoding} encoding ({len(prompt)} characters)")
+                        return prompt
+                    else:
+                        logger.warning(f"Could not find prompt in file with {encoding} encoding")
+            except UnicodeDecodeError:
+                logger.warning(f"Failed to decode with {encoding} encoding, trying next...")
+                continue
+        
+        # If all encodings fail, try with error handling
+        try:
+            with open('demo_prompt.py', 'r', encoding='utf-8', errors='ignore') as file:
+                content = file.read()
+                start = content.find('prompt = """') + 11
+                end = content.find('"""', start)
+                if start > 10 and end > start:
+                    prompt = content[start:end]
+                    logger.info(f"Loaded prompt with error handling ({len(prompt)} characters)")
+                    return prompt
+        except Exception as e:
+            logger.error(f"Failed to load prompt even with error handling: {e}")
+        
+        # Fallback prompt if file loading fails
+        logger.warning("Using fallback prompt due to encoding issues")
+        fallback_prompt = """AI-Prompt - IND Module 3: Section 3.2.P.1 Draft
+
+Context
+You are a regulatory-writing assistant drafting Section 3.2.P.1 "Description and Composition of the Drug Product" for an IND that is currently in Phase II clinical trials. All content must be suitable for direct inclusion in an eCTD-compliant Module 3 dossier.
+
+Product Information Provided Separately
+- Product code: <PRODUCT_CODE>
+- Dosage form: Immediate-release film-coated tablet
+- Active strength(s) and qualitative/quantitative composition appear in the source data you have received.
+
+Required Output Structure & Style
+
+1. 3.2.P.1.1 Description of the Dosage Form
+
+- One concise paragraph that:
+  - Identifies the dosage form and strength(s)
+  - States the active-ingredient concentration(s) clearly.
+  - Summarises the mechanism of action in one sentence.
+
+- Write in the third person, scientific style; do not use marketing language.
+
+2. 3.2.P.1.2 Composition
+
+- Introductory sentence: "The qualitative and quantitative composition of the is provided in Table 1."
+
+- Table 1 - 'Composition of the '
+
+  Columns (exact wording):
+  1. Component
+  2. Quality Reference
+  3. Function
+  4. Quantity / Unit (mg per tablet)
+
+- Populate all excipients and active ingredient(s) as rows using the supplied source data.
+- Add a Total Weight row.
+- Place a footnote directly beneath the table:
+  "Abbreviations: NF = National Formulary; Ph. Eur. = European Pharmacopoeia; USP = United States Pharmacopoeia."
+
+Formatting Instructions
+- Use standard IND section numbering and bold headings exactly as shown.
+- Table should render in Word/PDF without manual re-formatting (plain grid, no shading).
+- Do not add any content outside Sections 3.2.P.1.1 and 3.2.P.1.2.
+
+Quality Criteria
+- All numeric values must match the source composition data.
+- Spelling per US English; pharmacopoeia references capitalised.
+- Ready for QC with minimal edits.
+
+Please draft the section now, substituting the actual composition data in Table 1."""
+        
+        return fallback_prompt
+        
     except Exception as e:
         logger.error(f"Error loading prompt: {e}")
         return None
