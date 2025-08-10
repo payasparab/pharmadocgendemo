@@ -2362,34 +2362,134 @@ Please generate the complete document content based on the template and source d
         return None
 
 def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
-    """Convert DOCX file to PDF for OpenAI upload"""
+    """Convert DOCX file to PDF with professional formatting"""
     try:
         from docx import Document
         from reportlab.lib.pagesizes import letter
-        from reportlab.platypus import SimpleDocTemplate, Paragraph
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
         
-        # Extract text from DOCX
+        # Extract content from DOCX with structure preservation
         doc = Document(docx_path)
-        text_content = []
-        for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                text_content.append(paragraph.text.strip())
         
-        # Create PDF
+        # Create PDF with professional settings
         pdf_path = docx_path.replace('.docx', '_temp.pdf')
-        doc_pdf = SimpleDocTemplate(pdf_path, pagesize=letter)
+        doc_pdf = SimpleDocTemplate(
+            pdf_path, 
+            pagesize=letter,
+            topMargin=1*inch,
+            bottomMargin=1*inch,
+            leftMargin=1*inch,
+            rightMargin=1*inch
+        )
+        
+        # Define professional styles
         styles = getSampleStyleSheet()
+        
+        # Custom title style
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=20,
+            alignment=1,  # Center alignment
+            textColor=colors.HexColor('#1f497d')  # Dark blue
+        )
+        
+        # Custom heading style
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            spaceBefore=12,
+            textColor=colors.HexColor('#1f497d')  # Dark blue
+        )
+        
+        # Custom normal style
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=6,
+            leading=14
+        )
+        
         story = []
         
-        for text in text_content:
-            story.append(Paragraph(text, styles['Normal']))
+        # Process document content
+        for element in doc.element.body:
+            if element.tag.endswith('p'):  # Paragraph
+                paragraph = doc.paragraphs[len(story) if story else 0]
+                text = paragraph.text.strip()
+                
+                if text:
+                    # Check if it's a heading
+                    if paragraph.style.name.startswith('Heading'):
+                        level = int(paragraph.style.name[-1]) if paragraph.style.name[-1].isdigit() else 1
+                        if level == 1:
+                            story.append(Paragraph(text, title_style))
+                        else:
+                            story.append(Paragraph(text, heading_style))
+                    else:
+                        story.append(Paragraph(text, normal_style))
+                        
+            elif element.tag.endswith('tbl'):  # Table
+                # Find the corresponding table
+                table_index = len([item for item in story if isinstance(item, Table)])
+                if table_index < len(doc.tables):
+                    table = doc.tables[table_index]
+                    
+                    # Convert table to ReportLab format
+                    table_data = []
+                    for row in table.rows:
+                        row_data = []
+                        for cell in row.cells:
+                            cell_text = cell.text.strip()
+                            row_data.append(cell_text)
+                        table_data.append(row_data)
+                    
+                    if table_data:
+                        # Create ReportLab table
+                        rl_table = Table(table_data)
+                        
+                        # Apply professional table styling
+                        table_style = TableStyle([
+                            # Header row styling
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),  # Blue background
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),  # White text
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 10),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                            
+                            # Data rows styling
+                            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F2F2F2')),  # Light gray
+                            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                            ('FONTSIZE', (0, 1), (-1, -1), 9),
+                            
+                            # Grid and alignment
+                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F8F8')]),
+                        ])
+                        
+                        rl_table.setStyle(table_style)
+                        story.append(rl_table)
+                        story.append(Spacer(1, 12))  # Add spacing after table
         
+        # Build PDF
         doc_pdf.build(story)
+        logger.info(f"SUCCESS: PDF created with professional formatting: {pdf_path}")
         return pdf_path
         
     except Exception as e:
         logger.error(f"Error converting DOCX to PDF: {e}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         return None
 
 def convert_text_to_docx(text_content: str) -> bytes:
@@ -2520,7 +2620,7 @@ def extract_row_data(row_data):
         return None
 
 def generate_final_document_with_openai(prompt, template_analysis, pdf_information, row_data):
-    """Generate final document using OpenAI API"""
+    """Generate final document using OpenAI API with professional formatting"""
     try:
         logger.info("Starting final document generation with OpenAI...")
         
@@ -2530,7 +2630,13 @@ def generate_final_document_with_openai(prompt, template_analysis, pdf_informati
             return None
         logger.info("SUCCESS: OpenAI client initialized")
         
-        # Prepare the consolidated information
+        # Extract key data for better document generation
+        product_code = row_data.get('product_code', 'Unknown')
+        molecule_code = row_data.get('molecule_code', 'Unknown')
+        campaign_number = row_data.get('campaign_number', 'Unknown')
+        dosage_form = row_data.get('dosage_form', 'tablet')
+        
+        # Prepare the consolidated information with specific formatting instructions
         logger.info("Preparing consolidated information for document generation...")
         consolidated_info = f"""
 PROMPT:
@@ -2545,29 +2651,61 @@ PDF INFORMATION:
 ROW DATA:
 {json.dumps(row_data, indent=2)}
 
-INSTRUCTIONS:
-Based on the above information, generate a complete regulatory document in HTML format that can be converted to DOCX and PDF. The document should:
-1. Follow the template structure identified
-2. Include all relevant information from the PDF
-3. Use the row data for specific details
-4. Be properly formatted for regulatory submission
-5. Include all composition data and specifications
-6. Be ready for direct use in regulatory documentation
+DOCUMENT GENERATION INSTRUCTIONS:
+You are a pharmaceutical regulatory document expert. Generate a professional regulatory document in HTML format with the following specifications:
 
-Return the document in clean HTML format with proper styling.
+DOCUMENT STRUCTURE:
+1. Use proper HTML5 semantic structure
+2. Include comprehensive CSS styling for professional appearance
+3. Create well-formatted tables with proper borders and spacing
+4. Use consistent typography and spacing
+
+REQUIRED SECTIONS:
+1. Document Title: "Regulatory Document - {product_code}"
+2. Project Information section with molecule code and campaign details
+3. Description of the Dosage Form (3.2.P.1.1)
+4. Composition section (3.2.P.1.2) with detailed table
+5. Pharmaceutical Development (3.2.P.1.3) if applicable
+6. Manufacturing Process (3.2.P.1.4) if applicable
+
+TABLE FORMATTING REQUIREMENTS:
+- Use proper HTML table structure with <thead> and <tbody>
+- Include borders, padding, and professional styling
+- Ensure all data is properly aligned and formatted
+- Use consistent font sizes and colors
+- Include proper column headers
+
+CSS STYLING REQUIREMENTS:
+- Professional color scheme (dark blue headers, light gray backgrounds)
+- Proper spacing and margins
+- Clean typography with Arial or similar fonts
+- Responsive table design
+- Professional borders and shadows
+
+SPECIFIC FORMATTING:
+- Use <h1> for main title, <h2> for section headers, <h3> for subsections
+- Use <p> for paragraphs with proper line spacing
+- Use <table> with <thead> and <tbody> for data tables
+- Include proper CSS classes for styling
+- Ensure all pharmaceutical data is accurately represented
+
+Generate a complete, professional HTML document that can be directly converted to DOCX and PDF with excellent formatting.
 """
         logger.info(f"Consolidated information prepared ({len(consolidated_info)} characters)")
         
-        # Call OpenAI API
+        # Call OpenAI API with better parameters
         logger.info("Calling OpenAI API for document generation...")
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a pharmaceutical regulatory document generation expert. Generate professional regulatory documents in HTML format."},
+                {"role": "system", "content": """You are a pharmaceutical regulatory document generation expert. 
+                Generate professional, well-formatted regulatory documents in HTML format with comprehensive CSS styling. 
+                Always include proper table formatting, professional typography, and regulatory-compliant structure. 
+                Use semantic HTML5 elements and ensure all pharmaceutical data is accurately represented."""},
                 {"role": "user", "content": consolidated_info}
             ],
-            max_tokens=4000,
-            temperature=0.3
+            max_tokens=6000,
+            temperature=0.2
         )
         
         html_content = response.choices[0].message.content
@@ -2588,45 +2726,136 @@ Return the document in clean HTML format with proper styling.
         return None
 
 def convert_html_to_docx(html_content, output_path):
-    """Convert HTML content to DOCX format"""
+    """Convert HTML content to DOCX format with professional formatting"""
     try:
         from docx import Document
-        from docx.shared import Inches
+        from docx.shared import Inches, Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_TABLE_ALIGNMENT
+        from docx.oxml.shared import OxmlElement, qn
         from bs4 import BeautifulSoup
         import re
         
         # Parse HTML
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Create Word document
+        # Create Word document with professional settings
         doc = Document()
         
-        # Process HTML content
-        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'table']):
+        # Set document margins
+        sections = doc.sections
+        for section in sections:
+            section.top_margin = Inches(1)
+            section.bottom_margin = Inches(1)
+            section.left_margin = Inches(1)
+            section.right_margin = Inches(1)
+        
+        # Define professional styles
+        def add_heading_with_style(doc, text, level):
+            """Add heading with professional styling"""
+            heading = doc.add_heading(text, level=level)
+            for run in heading.runs:
+                run.font.name = 'Arial'
+                run.font.size = Pt(16 if level == 1 else 14 if level == 2 else 12)
+                run.font.bold = True
+                run.font.color.rgb = RGBColor(31, 73, 125)  # Dark blue
+            return heading
+        
+        def add_paragraph_with_style(doc, text, bold=False, italic=False):
+            """Add paragraph with professional styling"""
+            p = doc.add_paragraph()
+            run = p.add_run(text)
+            run.font.name = 'Arial'
+            run.font.size = Pt(11)
+            run.font.bold = bold
+            run.font.italic = italic
+            return p
+        
+        # Process HTML content with better structure handling
+        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'table', 'div']):
             if element.name.startswith('h'):
                 level = int(element.name[1])
-                doc.add_heading(element.get_text(), level=level)
+                text = element.get_text().strip()
+                if text:
+                    add_heading_with_style(doc, text, level)
+                    
             elif element.name == 'p':
-                doc.add_paragraph(element.get_text())
+                text = element.get_text().strip()
+                if text:
+                    # Check for bold or italic formatting
+                    is_bold = bool(element.find(['strong', 'b']))
+                    is_italic = bool(element.find(['em', 'i']))
+                    add_paragraph_with_style(doc, text, bold=is_bold, italic=is_italic)
+                    
             elif element.name == 'table':
-                # Handle tables
+                # Enhanced table handling
                 rows = element.find_all('tr')
                 if rows:
-                    table = doc.add_table(rows=len(rows), cols=len(rows[0].find_all(['td', 'th'])))
-                    table.style = 'Table Grid'
-                    
-                    for i, row in enumerate(rows):
+                    # Determine table dimensions
+                    max_cols = 0
+                    for row in rows:
                         cells = row.find_all(['td', 'th'])
-                        for j, cell in enumerate(cells):
-                            if i < len(table.rows) and j < len(table.rows[i].cells):
-                                table.rows[i].cells[j].text = cell.get_text()
+                        max_cols = max(max_cols, len(cells))
+                    
+                    if max_cols > 0:
+                        # Create table with proper dimensions
+                        table = doc.add_table(rows=len(rows), cols=max_cols)
+                        table.style = 'Table Grid'
+                        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+                        
+                        # Apply professional table styling
+                        for i, row in enumerate(rows):
+                            cells = row.find_all(['td', 'th'])
+                            for j, cell in enumerate(cells):
+                                if i < len(table.rows) and j < len(table.rows[i].cells):
+                                    cell_text = cell.get_text().strip()
+                                    table_cell = table.rows[i].cells[j]
+                                    table_cell.text = cell_text
+                                    
+                                    # Style header row
+                                    if i == 0 or cell.name == 'th':
+                                        for paragraph in table_cell.paragraphs:
+                                            for run in paragraph.runs:
+                                                run.font.bold = True
+                                                run.font.color.rgb = RGBColor(255, 255, 255)  # White text
+                                                run.font.size = Pt(10)
+                                        # Set header background color
+                                        table_cell._tc.get_or_add_tcPr().append(OxmlElement('w:shd'))
+                                        table_cell._tc.get_or_add_tcPr().xpath('w:shd')[0].set(qn('w:fill'), '4472C4')  # Blue background
+                                    else:
+                                        # Style data rows
+                                        for paragraph in table_cell.paragraphs:
+                                            for run in paragraph.runs:
+                                                run.font.size = Pt(9)
+                                                run.font.color.rgb = RGBColor(0, 0, 0)  # Black text
+                        
+                        # Add spacing after table
+                        doc.add_paragraph()
+                        
+            elif element.name == 'div':
+                # Handle div elements that might contain structured content
+                text = element.get_text().strip()
+                if text and not element.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'table']):
+                    add_paragraph_with_style(doc, text)
+        
+        # Add professional footer
+        doc.add_paragraph()
+        footer_para = doc.add_paragraph("Document generated by Regulatory Document System")
+        footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in footer_para.runs:
+            run.font.size = Pt(8)
+            run.font.italic = True
+            run.font.color.rgb = RGBColor(128, 128, 128)  # Gray color
         
         # Save document
         doc.save(output_path)
+        logger.info(f"SUCCESS: DOCX file created with professional formatting: {output_path}")
         return True
         
     except Exception as e:
         logger.error(f"Error converting HTML to DOCX: {e}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         return False
 
 def upload_generated_files_to_egnyte(access_token, docx_path, pdf_path, folder_id):
