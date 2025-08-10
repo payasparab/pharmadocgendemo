@@ -1,4 +1,4 @@
-prompt = """AI-Prompt — IND Module 3: Section 3.2.P.1 Draft
+test_prompt = """AI-Prompt — IND Module 3: Section 3.2.P.1 Draft
 
 Context
 You are a regulatory-writing assistant drafting Section 3.2.P.1 "Description and Composition of the Drug Product" for an IND that is currently in Phase II clinical trials. All content must be suitable for direct inclusion in an eCTD‐compliant Module 3 dossier.
