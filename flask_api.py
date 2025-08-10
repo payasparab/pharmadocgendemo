@@ -2238,29 +2238,12 @@ def upload_files_prompt_to_openai(prompt: str, template_path: str, source_docume
             return None
         logger.info("SUCCESS: OpenAI client initialized")
         
-        # Convert DOCX to PDF if needed for template
+        # Use files directly - OpenAI can handle DOCX files natively
         template_file_path = template_path
-        if template_path.lower().endswith('.docx'):
-            logger.info("Converting template DOCX to PDF for upload...")
-            template_pdf_path = convert_docx_to_pdf_for_upload(template_path)
-            if template_pdf_path:
-                template_file_path = template_pdf_path
-                logger.info(f"Template converted to PDF: {template_pdf_path}")
-            else:
-                logger.error("Failed to convert template to PDF")
-                return None
-        
-        # Convert DOCX to PDF if needed for source document
         source_file_path = source_document_path
-        if source_document_path.lower().endswith('.docx'):
-            logger.info("Converting source document DOCX to PDF for upload...")
-            source_pdf_path = convert_docx_to_pdf_for_upload(source_document_path)
-            if source_pdf_path:
-                source_file_path = source_pdf_path
-                logger.info(f"Source document converted to PDF: {source_pdf_path}")
-            else:
-                logger.error("Failed to convert source document to PDF")
-                return None
+        
+        logger.info(f"Using template file directly: {template_file_path}")
+        logger.info(f"Using source document directly: {source_file_path}")
         
         # Upload template file
         logger.info("Uploading template file to OpenAI...")
