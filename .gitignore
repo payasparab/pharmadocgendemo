@@ -4,6 +4,7 @@ localized_app.py
 .streamlit/secrets.toml
 .env
 aaitdemoharmony-3945571299f1.json
+egnyte_token_cache.json
 
 # Python
 __pycache__/
