@@ -395,7 +395,7 @@ def get_egnyte_folder_details(access_token, folder_id):
 
 def list_egnyte_folder_contents_path(access_token, folder_path):
     """List folder contents given a folder path"""
-    url = urllib.parse.quote(f"https://{DOMAIN}/pubapi/v1/fs/{folder_path}")
+    url = f"https://{DOMAIN}/pubapi/v1/fs/{urllib.parse.quote(folder_path)}"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
