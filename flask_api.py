@@ -393,6 +393,46 @@ def get_egnyte_folder_details(access_token, folder_id):
         logger.error(f"Error getting Egnyte folder details: {e}")
         return None
 
+def list_egnyte_folder_contents_path(access_token, folder_path):
+    """List folder contents given a folder path"""
+    url = urllib.parse.urlencode(f"https://{DOMAIN}/pubapi/v1/fs/{folder_path}")
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    params = {
+        "list_content": "true",
+        "count": "100"
+    }
+
+    try:
+        # Add rate limiting delay
+        rate_limit_delay()
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        return response.json()
+    except requests.HTTPError as e:
+        if "Developer Over Qps" in e.response.text:
+            logger.warning(f"Rate limit hit, waiting 3 seconds before retry...")
+            time.sleep(3)  # Longer wait for rate limit recovery
+            try:
+                rate_limit_delay()  # Add rate limiting before retry
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                return response.json()
+            except requests.HTTPError as retry_e:
+                logger.error(f"Failed to list folder contents on retry: {retry_e}")
+                return None
+        else:
+            logger.error(f"Failed to list folder contents: {e}")
+            return None
+    except Exception as e:
+        logger.error(f"Error listing Egnyte folder contents: {e}")
+        return None
+
+
+
 def list_egnyte_folder_contents(access_token, folder_id):
     """List folder contents"""
     url = f"https://{DOMAIN}/pubapi/v1/fs/ids/folder/{folder_id}"
@@ -1125,6 +1165,37 @@ def egnyte_list_source_documents():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# generic route for listing all documents in a folder provided a folder path, used in Campaign View Screen
+@app.route('/list-docs', methods=['GET'])
+def egnyte_list_docs():
+    """Get the documents listed in the folder"""
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+
+    try:
+        data = request.get_json()
+        folder_path = data.get('folder_path')
+
+        access_token = get_egnyte_token()
+        if not access_token:
+            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+        
+        folder_data = list_egnyte_folder_contents_path(access_token, folder_path)
+        if not folder_data:
+            return jsonify({"error": "Failed to list source documents folder contents"}), 500
+        
+        return jsonify({
+            "status": "success",
+            "folder_id": folder_data.get('folder_id'),
+            "documents": folder_data.get("files", []),
+            "folders": folder_data.get("folders", []),
+            "total_documents": len(folder_data.get("files", [])),
+            "total_folders": len(folder_data.get("folders", []))
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/egnyte-download-file', methods=['POST'])
 def egnyte_download_file():
     """Download a file from Egnyte"""
@@ -1264,6 +1335,9 @@ def egnyte_document_status():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+
 
 def background_generate_egnyte_document(template_file_id, source_document_ids, molecule_code, campaign_number, document_name, job_key):
     """Background function to generate document using OpenAI and save to Egnyte"""
