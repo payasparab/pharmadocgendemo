@@ -1,174 +1,98 @@
-# Regulatory Document Generator - Streamlit App
+Here’s a human-readable README for your `flask_api.py` that explains what it does, the API routes it exposes (grouped by purpose), and a high-level dependency map.
 
-A comprehensive Streamlit application for generating pharmaceutical regulatory documents, specifically Section 3.2.P.1 "Description and Composition of the Drug Product" for IND submissions. The app supports AI-powered text generation and exports to Word (.docx) or PDF formats.
+# Overview (what this app does)
 
-## Features
+* Provides a Flask HTTP API for **Egnyte** file/folder operations (auth, list, create, download, upload) with built-in **rate-limiting and token caching** to respect Egnyte limits. &#x20;
+* Kicks off **background jobs** to create standardized **Egnyte project folder structures** and to **generate documents** with OpenAI, reporting progress via status endpoints. &#x20;
+* Includes helper utilities like **clearing the Egnyte token cache** and a **threading test** endpoint. &#x20;
 
-- 💊 **Pharmaceutical Focus**: Specifically designed for IND regulatory submissions
-- 🤖 **AI-Powered Generation**: Uses OpenAI GPT-4 for regulatory text generation
-- 📊 **Composition Data**: Upload CSV files or use sample pharmaceutical data
-- 📄 **Word Export**: Generate professional Word documents with regulatory formatting
-- 📋 **PDF Export**: Create PDF documents compliant with eCTD standards
-- 🎨 **Customization**: Configure product codes, dosage forms, and mechanisms of action
-- ✅ **Validation**: Built-in regulatory compliance checklist
-- 📱 **Responsive Design**: Modern, user-friendly interface
+---
 
-## Installation
+# API Routes
 
-1. **Clone or download the project files**
+## 1) Utilities & Status
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+* `GET /test-thread` – fires a 10-second background thread to verify threading works; returns immediately with a timestamp.&#x20;
+* `GET /folder-status?molecule_code=<>&campaign_number=<>` – status for **folder creation** jobs (running/progress/completed + data). &#x20;
+* `GET /document-status?molecule_code=<>&campaign_number=<>` – status for **document generation** jobs (running/progress/completed + data).&#x20;
+* `POST /egnyte-clear-cache` – clears in-memory and on-disk token cache for Egnyte auth.&#x20;
 
-3. **Configure OpenAI API**:
-   - Option 1: Create `.streamlit/secrets.toml`:
-     ```toml
-     [openai]
-     api_key = "your-openai-api-key-here"
-     ```
-   - Option 2: Update `credentials.py` with your API key
+## 2) Egnyte – Folder Lifecycle & Listings
 
-4. **Run the application**:
-   ```bash
-   streamlit run app.py
-   ```
+* `POST /egnyte-generate-folder-structure` – starts background job to create a project/campaign folder tree (Pre/Post, dept/status subfolders). Returns a `job_key` + poll URL. &#x20;
+* `GET /egnyte-folder-status?molecule_code=<>&campaign_number=<>` – status for the above folder-creation job.&#x20;
+* `GET /egnyte-list-folder?folder_id=<>` – list folders/files for a folder ID (defaults to `ROOT_FOLDER`). &#x20;
+* `POST /egnyte-create-folder` – create a folder under `parent_folder_id` (defaults to `ROOT_FOLDER`); returns path and a direct Egnyte web URL. &#x20;
+* `GET /egnyte-list-templates` – list files/folders inside the predefined templates folder. &#x20;
+* `GET /egnyte-list-source-documents` – list files/folders inside the predefined source documents folder. &#x20;
+* `GET /list-docs` – list documents for a **folder path** (not ID); returns each file plus a navigable link built from its `group_id`. &#x20;
 
-## Usage
+## 3) Egnyte – File Download / Document Generation
 
-### 1. Product Configuration
-- Enter Product Code (e.g., "ABC-123")
-- Specify Dosage Form (e.g., "Immediate-release film-coated tablet")
-- Describe Mechanism of Action
+* `POST /egnyte-download-file` – download a file by file ID; returns base64 content, content type, and size. &#x20;
+* `POST /egnyte-generate-document` – background job that: downloads a template + source docs from Egnyte, uses OpenAI to generate a new document, and uploads it back. Returns `job_key` + poll URL. &#x20;
+* `GET /egnyte-document-status?job_key=<>` – status for the above document generation job (progress/completed + file URL when done).&#x20;
 
-### 2. Composition Data
-- Upload CSV file with columns: Component, Quality_Reference, Function, Quantity_mg_per_tablet
-- Or use the built-in sample pharmaceutical data
-- View composition table and total weight calculation
+## 4) Regulatory Docs – Bulk
 
-### 3. AI Text Generation
-- Enable AI generation for regulatory text
-- Generate Section 3.2.P.1.1 (Description) and 3.2.P.1.2 (Composition)
-- Review generated text in formatted display
+* `POST /reg-docs-bulk-request` – accepts a JSON array (e.g., from Retool), parses product/version info, fetches templates, and orchestrates bulk regulatory doc actions. &#x20;
 
-### 4. Document Export
-- **Word Export**: Generate .docx files with proper regulatory formatting
-- **PDF Export**: Create PDF documents with tables and compliance elements
-- Download buttons appear after generation
+## 5) Dev/Test Helpers
 
-### 5. Validation & Settings
-- Review regulatory compliance checklist
-- Configure document settings and compliance levels
-- Validate all required elements are present
+* `POST /test-document-generation` – local test runner that reads a sample template/PDF from disk, calls the OpenAI pipeline, and writes a DOCX to disk; returns timings & details. &#x20;
 
-## Supported Data Format
+---
 
-### CSV Structure
-```csv
-Component,Quality_Reference,Function,Quantity_mg_per_tablet
-Active Pharmaceutical Ingredient,USP,Active Ingredient,25.0
-Microcrystalline Cellulose,NF,Tablet Diluent,150.0
-Lactose Monohydrate,NF,Tablet Diluent,100.0
-Croscarmellose Sodium,NF,Disintegrant,10.0
-Magnesium Stearate,NF,Lubricant,2.0
-Opadry II White,NF,Film Coating,8.0
-```
+# Core Function Categories (what the code is organized around)
 
-### Quality References
-- USP = United States Pharmacopoeia
-- NF = National Formulary
-- Ph. Eur. = European Pharmacopoeia
+1. **Egnyte Authentication & Governance**
 
-## Regulatory Compliance
+   * **Token acquisition & retry** with rate-limiting and detailed logging. **Caches tokens** in memory and on disk; supports clearing the cache.  &#x20;
+   * **Constants & limits**: waits \~1s/request by default; comments document Egnyte limits.&#x20;
 
-The app generates documents compliant with:
-- FDA IND submission requirements
-- ICH guidelines
-- eCTD Module 3 structure
-- 21 CFR Part 312 requirements
+2. **Egnyte Folder/File Operations**
 
-## File Structure
+   * List folder contents (by ID or by path), create folders, and build direct file links. &#x20;
+   * **Background folder scaffold** builder for project/campaign (Pre/Post → Dept → Status).&#x20;
 
-```
-documentgenerationdemo/
-├── app.py                    # Main Streamlit application
-├── requirements.txt          # Python dependencies
-├── README.md                # This file
-├── credentials.py           # OpenAI API configuration template
-├── .gitignore              # Git ignore file
-├── pharma_sample_data.csv   # Sample pharmaceutical composition data
-└── sample_data.csv         # General sample data (legacy)
-```
+3. **Document Generation Pipeline (OpenAI)**
 
-## Requirements
+   * Downloads template + sources from Egnyte, extracts text, prompts OpenAI, writes a DOCX, and uploads the result. Exposed via `/egnyte-generate-document` with status polling.  &#x20;
 
-- Python 3.8+
-- Streamlit
-- Pandas
-- python-docx
-- reportlab
-- openai
-- matplotlib
-- seaborn
+4. **Job Management & Status**
 
-## Configuration
+   * All long-running operations run in **background threads**; the app tracks `job_status`/`job_results` and exposes read-only status endpoints returning progress, timestamps, and results. &#x20;
 
-### OpenAI API Setup
-1. Get an API key from [OpenAI](https://platform.openai.com/)
-2. Configure in Streamlit secrets or credentials.py
-3. The app will fall back to template text if AI is unavailable
+5. **Bulk Regulatory Workflow**
 
-### Streamlit Secrets (Recommended)
-Create `.streamlit/secrets.toml`:
-```toml
-[openai]
-api_key = "sk-your-actual-api-key-here"
-```
+   * Parses incoming requests, normalizes version strings, pulls supporting docs/templates from Egnyte, and orchestrates document actions at scale. &#x20;
 
-### Local Credentials
-Update `credentials.py`:
-```python
-OPENAI_API_KEY = "sk-your-actual-api-key-here"
-```
+---
 
-## Troubleshooting
+# Dependency & Integration Map (high-level)
 
-### Common Issues
+**Framework & HTTP**
 
-1. **OpenAI API errors**: Check API key configuration and billing status
-2. **CSV upload issues**: Ensure correct column names and data format
-3. **PDF generation errors**: Verify reportlab installation
-4. **Word document issues**: Check python-docx installation
+* **Flask** (routing, JSON I/O), **Flask-CORS** (cross-origin access). &#x20;
 
-### Performance Tips
+**External Services**
 
-- Use appropriate data sizes for optimal performance
-- Ensure stable internet connection for AI generation
-- Close other applications to free up memory
+* **Egnyte REST API** – OAuth token + folder/file endpoints (create/list/download/upload). Rate-limit helper `rate_limit_delay()`, persistent token cache file `egnyte_token_cache.json`. &#x20;
+* **OpenAI** – `initialize_openai()` builds a client from env/credentials; used by `generate_document_with_openai()` (chat completions) to assemble DOCX outputs. &#x20;
 
-## Customization
+**Doc/Report Generation**
 
-### Adding New Regulatory Sections
-1. Modify the AI prompt in `generate_regulatory_text_with_ai()`
-2. Update the parsing logic in `parse_ai_response()`
-3. Add new export functions for different document types
+* **python-docx** for DOCX building; **reportlab** for PDF export utilities; **pandas** for bulk request parsing.  &#x20;
 
-### Modifying Export Formats
-1. Edit `export_to_word_regulatory()` and `export_to_pdf_regulatory()`
-2. Customize styling and compliance elements
-3. Add new regulatory document types
+**HTTP & Utils**
 
-## Security Notes
+* **requests** (Egnyte calls), **urllib.parse** (encoding), **threading** (background jobs), **logging** (observability), **datetime/time** (timestamps, delays). &#x20;
 
-- Never commit API keys to version control
-- Use environment variables or Streamlit secrets
-- The `.gitignore` file excludes sensitive files
+**Optional/Visualization Imports**
+(Loaded but not central to the routes shown): **plotly**, **matplotlib**, **seaborn**, **PIL**, **numpy**. &#x20;
 
-## License
+**Config & Secrets**
 
-This project is open source and available under the MIT License.
+* Tries `credentials.py`; otherwise reads env vars: `EGNYTE_DOMAIN`, `EGNYTE_CLIENT_ID`, `EGNYTE_CLIENT_SECRET`, `EGNYTE_USERNAME`, `EGNYTE_PASSWORD`, `EGNYTE_ROOT_FOLDER`, `OPENAI_API_KEY`. Sets booleans `EGNYTE_AVAILABLE`/`OPENAI_AVAILABLE`.&#x20;
 
-## Contributing
-
-Feel free to submit issues, feature requests, or pull requests to improve the regulatory document generation capabilities. 
+---
