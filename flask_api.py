@@ -1184,6 +1184,13 @@ def egnyte_list_docs():
         if not folder_data:
             return jsonify({"error": "Failed to list source documents folder contents"}), 500
         
+        # add direct links for each of the files based on each one's group id
+        file_list = folder_data.get('files', [])
+
+        for f in file_list:
+            f['file_link'] = f"https://{DOMAIN}/navigate/file/{f.get('group_id')}"
+
+        
         return jsonify({
             "status": "success",
             "folder_id": folder_data.get('folder_id'),
