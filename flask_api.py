@@ -1203,6 +1203,50 @@ def egnyte_list_docs():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# more robust version of egnyte_list_docs, will handle multiple folder paths given to it
+@app.route('/egnyte-list-docs-multi-folder', methods=['POST'])
+def egnyte_list_docs_multi_folder():
+    if not EGNYTE_AVAILABLE:
+        return jsonify({"error": "Egnyte integration not available. Please configure Egnyte credentials."}), 503
+
+    try:
+        data = request.get_json()
+        folder_paths = data.get('folder_paths', [])
+
+        access_token = get_egnyte_token()
+        if not access_token:
+            return jsonify({"error": "Failed to get Egnyte access token"}), 500
+        
+        full_file_list = []
+        full_folder_id_list = []
+
+        for folder_path in folder_paths:
+            folder_data = list_egnyte_folder_contents_path(access_token, folder_path)
+            if not folder_data:
+                return jsonify({"error": "Failed to list source documents folder contents"}), 500
+            
+            # adds folder id to list
+            full_folder_id_list.append(folder_data.get('folder_id'))
+            
+            # add direct links for each of the files based on each one's group id
+            file_list = folder_data.get('files', [])
+
+            for f in file_list:
+                f['file_link'] = f"https://{DOMAIN}/navigate/file/{f.get('group_id')}"
+                full_file_list.append(f)
+
+        
+        return jsonify({
+            "status": "success",
+            "folder_ids": full_folder_id_list,
+            "documents": full_file_list,
+            "total_documents": len(full_file_list)
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/egnyte-download-file', methods=['POST'])
 def egnyte_download_file():
     """Download a file from Egnyte"""
