@@ -1221,10 +1221,12 @@ def egnyte_list_docs_multi_folder():
         full_folder_id_list = []
 
         for folder_path in folder_paths:
-            logger.info(f"Started processing for {folder_path}")
+            logger.info(f"Started request for {folder_path}")
             folder_data = list_egnyte_folder_contents_path(access_token, folder_path)
             if not folder_data:
                 return jsonify({"error": "Failed to list source documents folder contents"}), 500
+            
+            logger.info(f"Finished request for {folder_path}")
             
             # adds folder id to list
             full_folder_id_list.append(folder_data.get('folder_id'))
