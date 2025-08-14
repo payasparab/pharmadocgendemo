@@ -1221,6 +1221,7 @@ def egnyte_list_docs_multi_folder():
         full_folder_id_list = []
 
         for folder_path in folder_paths:
+            logger.info(f"Started processing for {folder_path}")
             folder_data = list_egnyte_folder_contents_path(access_token, folder_path)
             if not folder_data:
                 return jsonify({"error": "Failed to list source documents folder contents"}), 500
@@ -1234,6 +1235,8 @@ def egnyte_list_docs_multi_folder():
             for f in file_list:
                 f['file_link'] = f"https://{DOMAIN}/navigate/file/{f.get('group_id')}"
                 full_file_list.append(f)
+            
+            logger.info(f"Finished processing for {folder_path}")
 
         
         return jsonify({
