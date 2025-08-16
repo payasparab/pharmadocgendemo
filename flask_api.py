@@ -13,7 +13,7 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 import tempfile
 import os
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 from typing import Dict, List, Optional
 import plotly.express as px
 import plotly.graph_objects as go
@@ -38,9 +38,10 @@ from flask_cors import CORS
 
 # Try to import credentials, fall back to environment variables if not available
 try:
-    from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER, OPENAI_API_KEY
+    from credentials import DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER, OPENAI_API_KEY, AZURE_AI_API_ENDPOINT, AZURE_AI_API_KEY, MODEL_TYPE
     EGNYTE_AVAILABLE = True
     OPENAI_AVAILABLE = True
+    AZURE_OPENAI_AVAILABLE = True
 except ImportError:
     # Use environment variables for deployment
     DOMAIN = os.getenv('EGNYTE_DOMAIN')
@@ -50,8 +51,17 @@ except ImportError:
     PASSWORD = os.getenv('EGNYTE_PASSWORD')
     ROOT_FOLDER = os.getenv('EGNYTE_ROOT_FOLDER')
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    AZURE_AI_API_KEY = os.getenv('AZURE_AI_API_KEY')
+    AZURE_AI_API_ENDPOINT = os.getenv('AZURE_AI_API_ENDPOINT')
     EGNYTE_AVAILABLE = all([DOMAIN, CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, ROOT_FOLDER])
     OPENAI_AVAILABLE = bool(OPENAI_API_KEY)
+    MODEL_TYPE = os.getenv('USING_AZURE')          # flag for determining if deployment is using azure ai
+
+# Determine which model deployment we are using based off an environment, default to OpenAI
+try:
+    AI_TYPE = os.getenv('AI_TYPE')
+except Exception:
+    AI_TYPE = 'openai'
 
 # Rate limiting configuration for Egnyte
 # Egnyte limits: 2 calls per second, 1,000 calls per day
@@ -681,6 +691,10 @@ def load_openai_api_key():
     """Load OpenAI API key from credentials or environment variable"""
     return OPENAI_API_KEY
 
+def load_azure_openai_api_key():
+    """Load Azure AI API key from credentials or environment variable"""
+    return AZURE_AI_API_KEY
+
 def initialize_openai():
     """Initialize OpenAI client"""
     if not OPENAI_AVAILABLE:
@@ -697,6 +711,30 @@ def initialize_openai():
             return None
     else:
         logger.error("OpenAI API key not found or invalid")
+        return None
+
+def initialize_azure_openai():
+    if not AZURE_OPENAI_AVAILABLE:
+        logger.error('Azure AI credentials not available')
+        return None
+    
+    api_key = load_azure_openai_api_key()
+    api_version = "2024-12-01-preview"
+    azure_endpoint = AZURE_AI_API_ENDPOINT
+
+    if api_key:
+        try:
+            client = AzureOpenAI(
+                api_version = api_version,
+                azure_endpoint = azure_endpoint,
+                api_key=api_key
+            )
+            return client
+        except Exception as e:
+            logger.error(f"Error initializing Azure OpenAI client: {e}")
+            return None
+    else:
+        logger.error("Azure OpenAI API key not found or invalid")
         return None
 
 def create_sample_pharma_data():
@@ -1824,8 +1862,10 @@ def test_document_generation():
         logger.info("Starting document generation test...")
         start_time = time.time()
         
+        upload_func = upload_files_prompt_to_azure_openai if MODEL_TYPE == 'azure' else upload_files_prompt_to_openai
+
         # Call the new function
-        docx_content = upload_files_prompt_to_openai(
+        docx_content = upload_func(
             prompt=test_prompt,
             template_path=template_path,
             source_document_path=source_document_path
@@ -2549,6 +2589,185 @@ Please generate the complete document content in HTML format based on the templa
         logger.error("=" * 60)
         return None
 
+
+# testing duplicate of upload_files_prompt_to_openai using azure open ai client instead (just for testing purposes, we can merge the two later)
+def upload_files_prompt_to_azure_openai(prompt: str, template_path: str, source_document_path: str) -> str:
+    """
+    Upload files to Azure OpenAI and generate a document using the prompt and uploaded files.
+    
+    Args:
+        prompt: The prompt text to guide document generation
+        template_path: Path to the template file (DOCX or PDF)
+        source_document_path: Path to the source document file (DOCX or PDF)
+    
+    Returns:
+        Generated document content in DOCX format as bytes
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info("STARTING DOCUMENT GENERATION WITH AZURE OPENAI")
+        logger.info("=" * 60)
+        logger.info(f"Prompt length: {len(prompt)} characters")
+        logger.info(f"Template path: {template_path}")
+        logger.info(f"Source document path: {source_document_path}")
+        
+        # Initialize OpenAI client
+        client = initialize_azure_openai()
+        if not client:
+            logger.error("FAILED: Could not initialize Azure OpenAI client")
+            return None
+        logger.info("SUCCESS: Azure OpenAI client initialized")
+        
+        # Convert DOCX to PDF if needed for template (Responses API requires PDF)
+        template_file_path = template_path
+        if template_path.lower().endswith('.docx'):
+            logger.info("Converting template DOCX to PDF for upload...")
+            template_pdf_path = convert_docx_to_pdf_for_upload(template_path)
+            if template_pdf_path:
+                template_file_path = template_pdf_path
+                logger.info(f"Template converted to PDF: {template_pdf_path}")
+            else:
+                logger.error("Failed to convert template to PDF")
+                return None
+        
+        # Convert DOCX to PDF if needed for source document (Responses API requires PDF)
+        source_file_path = source_document_path
+        if source_document_path.lower().endswith('.docx'):
+            logger.info("Converting source document DOCX to PDF for upload...")
+            source_pdf_path = convert_docx_to_pdf_for_upload(source_document_path)
+            if source_pdf_path:
+                source_file_path = source_pdf_path
+                logger.info(f"Source document converted to PDF: {source_pdf_path}")
+            else:
+                logger.error("Failed to convert source document to PDF")
+                return None
+        
+        # Upload template file
+        logger.info("Uploading template file to OpenAI...")
+        with open(template_file_path, 'rb') as file:
+            template_file = client.files.create(
+                file=file,
+                purpose='user_data'
+            )
+            template_file_id = template_file.id
+        logger.info(f"SUCCESS: Template file uploaded with ID: {template_file_id}")
+        
+        # Upload source document file
+        logger.info("Uploading source document file to Azure OpenAI...")
+        with open(source_file_path, 'rb') as file:
+            source_file = client.files.create(
+                file=file,
+                purpose='user_data'
+            )
+            source_file_id = source_file.id
+        logger.info(f"SUCCESS: Source document file uploaded with ID: {source_file_id}")
+        
+        # Generate document using Azure OpenAI Responses API
+        logger.info("Generating document with Azure OpenAI...")
+        response = client.responses.create(
+            model="gpt-4.1",                                         # May need to modify
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": template_file_id
+                        },
+                        {
+                            "type": "input_file",
+                            "file_id": source_file_id
+                        },
+                        {
+                            "type": "input_text",
+                            "text": f"""
+{prompt}
+
+INSTRUCTIONS:
+1. Use the template file as the structure and format for the new document
+2. Extract relevant information from the source document
+3. Create a comprehensive, well-structured document following the template format
+4. Maintain professional tone and regulatory compliance
+5. Return the document in clean, properly formatted HTML that can be converted to DOCX
+
+FORMATTING REQUIREMENTS:
+- Use <h1> for main headings, <h2> for subheadings, <h3> for sub-subheadings
+- Use <ul><li> for bullet points and lists
+- Use <strong> for important terms, specifications, and key data
+- Use <p> for paragraphs
+- Use <table><tr><td> for tables with proper structure
+- Use clear, professional language without placeholders or brackets
+- Structure information logically with proper spacing
+- Include all relevant pharmaceutical data from the source document
+- Make the document ready for immediate regulatory use
+- Return complete, valid HTML that can be directly rendered
+
+Please generate the complete document content in HTML format based on the template and source document.
+"""
+                        }
+                    ]
+                }
+            ]
+        )
+        
+        # Extract the generated content
+        generated_content = response.output_text
+        logger.info(f"SUCCESS: Document generated ({len(generated_content)} characters)")
+        
+        # Convert the generated HTML content to DOCX format
+        logger.info("Converting generated HTML content to DOCX format...")
+        
+        # Create a temporary file path for the DOCX
+        import tempfile
+        temp_docx_path = tempfile.mktemp(suffix='.docx')
+        
+        # Convert HTML to DOCX using the proper HTML converter
+        success = convert_html_to_docx(generated_content, temp_docx_path)
+        if not success:
+            logger.error("Failed to convert generated HTML content to DOCX")
+            return None
+        
+        # Read the generated DOCX file
+        with open(temp_docx_path, 'rb') as docx_file:
+            docx_content = docx_file.read()
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_docx_path)
+        except:
+            pass
+        
+        # Clean up uploaded files
+        logger.info("Cleaning up uploaded files...")
+        try:
+            client.files.delete(template_file_id)
+            client.files.delete(source_file_id)
+            logger.info("SUCCESS: Uploaded files cleaned up")
+        except Exception as e:
+            logger.warning(f"Warning: Could not delete uploaded files: {e}")
+        
+        # Clean up temporary PDF files if they were created
+        if template_file_path != template_path and os.path.exists(template_file_path):
+            os.unlink(template_file_path)
+        if source_file_path != source_document_path and os.path.exists(source_file_path):
+            os.unlink(source_file_path)
+        
+        logger.info("SUCCESS: Document generation completed")
+        logger.info("=" * 60)
+        
+        return docx_content
+        
+    except Exception as e:
+        logger.error("=" * 60)
+        logger.error("DOCUMENT GENERATION FAILED")
+        logger.error("=" * 60)
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 60)
+        return None
+
 def convert_docx_to_pdf_for_upload(docx_path: str) -> str:
     """Convert DOCX file to PDF with professional formatting"""
     try:
@@ -3015,7 +3234,11 @@ def process_document_generation(matched_row):
         
         # Step 4: Generate document using the new upload_files_prompt_to_openai function
         logger.info("Step 4: Generating document with OpenAI file upload...")
-        docx_content = upload_files_prompt_to_openai(
+
+        # set the function to upload a prompt based on what deployment of an llm we are using
+        upload_func = upload_files_prompt_to_azure_openai if MODEL_TYPE == 'azure' else upload_files_prompt_to_openai
+
+        docx_content = upload_func(
             prompt=prompt,
             template_path=template_temp_path,
             source_document_path=source_temp_path
